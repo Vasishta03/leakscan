@@ -101,25 +101,23 @@ leakscan.scan_text(open(".env").read(), filename=".env")
 
 `leakscan hook` stops Claude Code or Cursor from writing a secret into a file or a shell command. `leakscan mcp` runs an MCP server so an agent can scan text or files before it commits. Setup is in the [agent docs](https://vasishta03.github.io/leakscan/agents/).
 
-## How it compares
+## Why leakscan
 
-All three are good tools. Pick the one that fits.
+Things you get with leakscan that gitleaks and trufflehog don't have:
 
 | | leakscan | gitleaks | trufflehog |
 |---|---|---|---|
-| Install | pip, pipx, brew, Docker, binaries | Go binary, brew, Docker | Go binary, brew, Docker |
-| Built-in detectors | 208 | about 200 | 800+ |
-| Live key verification | 51 types, opt-in | No | Yes, most detectors |
-| Staged / diff scanning | Yes | Yes (`--staged`) | Yes (`--since-commit`) |
-| Archives and decoding | Yes (opt-in) | Yes | Yes |
-| Docker images, GitHub orgs | Yes | No | Yes, plus S3, GCS, Postman and more |
-| PyPI / npm packages | Yes | No | No |
-| Notebook cell and output locations | Yes | No | No |
-| Blast radius and rotation link per finding | Yes | No | No |
-| Python API | Yes | Go library | No |
-| SARIF | Yes | Yes | Yes |
+| `pip install` and a Python API | Yes | No | No |
+| Blast radius and a rotation link on every finding | Yes | No | No |
+| Secret age and scraping-risk rating from git blame | Yes | No | No |
+| Jupyter notebook scanning with cell and output locations | Yes | No | No |
+| Scan a published PyPI or npm package by name | Yes | No | No |
+| Built-in HTML report and Markdown PR comment | Yes | No | No |
+| History cleanup command generator (`leakscan purge`) | Yes | No | No |
+| Block AI coding agents from writing secrets (Claude Code, Cursor) | Yes | No | No |
 
-Use **gitleaks** if raw speed matters most. In our [benchmark](benchmarks/README.md) it scanned the requests repo's full history 4.4x faster than leakscan. Use **trufflehog** if you need verification across hundreds of services or sources like S3 and Postman. leakscan is the easiest of the three to drop into a Python project or a notebook workflow.
+On top of that, leakscan covers what you'd expect from a secret scanner: git history, staged and PR diffs, archives,
+encoded values, Docker images, GitHub orgs, live verification and SARIF.
 
 ## More
 

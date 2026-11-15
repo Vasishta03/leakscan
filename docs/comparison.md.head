@@ -1,12 +1,16 @@
-# Comparison and benchmarks
+# Why leakscan
 
-The feature table is in the [README](https://github.com/Vasishta03/leakscan#how-it-compares). Short version:
+What leakscan does that gitleaks and trufflehog don't:
 
-- **gitleaks** is faster, ships as a single binary, and also does staged scans, decoding and archives.
-  Pick it if speed is what matters.
-- **trufflehog** has 800+ detectors with live verification, plus sources like S3, GCS, Postman, Jenkins and Hugging
-  Face. Pick it when you need verification breadth.
-- **leakscan** is pip-installable with a Python API. It's the only one of the three with notebook cell locations,
-  PyPI and npm package scanning, blast-radius and rotation guidance, agent hooks and an MCP server.
+- Installs with `pip`, `pipx` or `uv`, and has a typed Python API (`import leakscan`).
+- Every finding explains its blast radius and links to the page where you rotate it.
+- Inside a git repo, it shows who committed the secret, how long it has been exposed, and how likely it is to have
+  been scraped already.
+- Notebooks are parsed cell by cell, so findings point to the exact cell and output, including keys that were only printed.
+- It scans published PyPI and npm packages by name (`leakscan scan pypi:requests==2.32.3`).
+- It writes a single-file HTML report and Markdown PR comments, plus SARIF, JUnit, SonarQube and DefectDojo.
+- `leakscan purge` writes the history cleanup commands for you.
+- `leakscan hook` and `leakscan mcp` stop AI coding agents from writing secrets in the first place.
 
-
+It also covers the standard ground: git history, staged and PR diffs, archives, decoding, Docker images, GitHub orgs,
+live verification for 51 secret types, and SARIF for GitHub code scanning.

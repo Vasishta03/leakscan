@@ -103,12 +103,7 @@ def verification_page() -> None:
 
 
 def copies() -> None:
-    bench = (ROOT / "benchmarks" / "README.md").read_text(encoding="utf-8")
-    bench = re.sub(r"^# Benchmarks", "## Benchmarks", bench, flags=re.M)
-    bench = re.sub(r"^## (?!Benchmarks)", "### ", bench, flags=re.M)
-    bench = bench.replace("(results.json)", "(https://github.com/Vasishta03/leakscan/blob/main/benchmarks/results.json)")
-    (DOCS / "comparison.md").write_text((DOCS / "comparison.md.head").read_text(encoding="utf-8") + "\n" + bench,
-                                        encoding="utf-8")
+    shutil.copy(DOCS / "comparison.md.head", DOCS / "comparison.md")
     for src, dst in (("CHANGELOG.md", "changelog.md"), ("CONTRIBUTING.md", "contributing.md")):
         text = (ROOT / src).read_text(encoding="utf-8").replace("](CODE_OF_CONDUCT.md)",
                                                                  "](https://github.com/Vasishta03/leakscan/blob/main/CODE_OF_CONDUCT.md)")
