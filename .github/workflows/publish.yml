@@ -32,7 +32,7 @@ jobs:
           /tmp/sbom/bin/pip install --quiet dist/*.whl
           mkdir -p sbom
           cyclonedx-py environment /tmp/sbom --output-format JSON -o "sbom/leakscan-${GITHUB_REF_NAME}.cdx.json"
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@v4
         with:
           subject-path: dist/*
       - uses: actions/attest-sbom@v2
@@ -107,7 +107,7 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@v4
         with:
           subject-path: artifacts/leakscan-*
       - uses: sigstore/gh-action-sigstore-python@v3.0.0
