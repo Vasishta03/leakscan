@@ -355,7 +355,7 @@ def to_sarif(result: ScanResult, redact: bool = True) -> str:
                     "region": {"startLine": max(f.line_number, 1)},
                 }
             }],
-            "partialFingerprints": {"primaryLocationLineHash": f.fingerprint()},
+            "partialFingerprints": {"leakscanFingerprint/v1": f.fingerprint()},
             "properties": props,
         }
 

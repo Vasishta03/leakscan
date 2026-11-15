@@ -67,7 +67,8 @@ runs:
         VERSION: ${{ inputs.version }}
         ACTION_PATH: ${{ github.action_path }}
       run: |
-        if [ "$VERSION" = "local" ]; then pip install --quiet "$ACTION_PATH"
+        if [ "$VERSION" = "local" ]; then
+          cp -r "$ACTION_PATH" "$RUNNER_TEMP/leakscan-src" && pip install --quiet "$RUNNER_TEMP/leakscan-src"
         elif [ -n "$VERSION" ]; then pip install --quiet "leakscan==$VERSION"
         else pip install --quiet leakscan; fi
         leakscan --version
