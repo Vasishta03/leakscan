@@ -41,7 +41,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0", "pytest-cov", "ruff>=0.6", "mypy>=1.10", "types-requests", "types-PyYAML"]
+dev = ["pytest>=9.2.0", "pytest-cov", "ruff>=0.6", "mypy>=1.10", "types-requests", "types-PyYAML"]
 docs = ["mkdocs-material>=9.5"]
 
 [project.urls]
