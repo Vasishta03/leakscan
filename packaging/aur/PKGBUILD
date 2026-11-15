@@ -11,7 +11,7 @@ depends=('python' 'python-click' 'python-rich' 'python-requests' 'python-yaml' '
 makedepends=('python-build' 'python-installer' 'python-setuptools' 'python-wheel')
 checkdepends=('python-pytest')
 source=("https://files.pythonhosted.org/packages/source/${_name::1}/${_name}/${_name}-${pkgver}.tar.gz")
-sha256sums=('SDIST_SHA256')
+sha256sums=('3d38d8ead5c7b67b1c3b917b7360be858075fda796bc9535e8bf6d0952f884f1')
 
 build() {
   cd "${_name}-${pkgver}"

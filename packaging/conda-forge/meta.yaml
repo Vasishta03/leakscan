@@ -7,7 +7,7 @@ package:
 
 source:
   url: https://pypi.org/packages/source/{{ name[0] }}/{{ name }}/leakscan-{{ version }}.tar.gz
-  sha256: SDIST_SHA256
+  sha256: 3d38d8ead5c7b67b1c3b917b7360be858075fda796bc9535e8bf6d0952f884f1
 
 build:
   noarch: python
