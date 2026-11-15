@@ -1,11 +1,11 @@
-FROM python:3.12-alpine AS build
+FROM python:3.15-alpine AS build
 WORKDIR /src
 COPY pyproject.toml README.md LICENSE ./
 COPY scanner ./scanner
 COPY leakscan ./leakscan
 RUN pip wheel --no-cache-dir --wheel-dir /wheels .
 
-FROM python:3.12-alpine
+FROM python:3.15-alpine
 LABEL org.opencontainers.image.source="https://github.com/Vasishta03/leakscan" \
       org.opencontainers.image.description="Find leaked API keys and secrets in code, git history, images and packages" \
       org.opencontainers.image.licenses="MIT"
