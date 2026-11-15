@@ -7,6 +7,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-15
+
+### Changed
+
+- The GitHub Action's display name is now "Leakscan Secret Scanner" so it can be listed on the Marketplace (the name
+  "leakscan" belongs to an existing GitHub account). Usage is unchanged: `uses: Vasishta03/leakscan@v1`.
+- Release and Docker workflows only run on version tags; Dependabot updates are grouped.
+
 ## [0.5.0] - 2026-11-15
 
 CI-native, notebook-aware, benchmarked.
@@ -142,7 +150,8 @@ CI-native, notebook-aware, benchmarked.
 - Live verification, 55+ patterns, SARIF output, baseline mode, GitHub gist
   scanning, and parallel scanning.
 
-[Unreleased]: https://github.com/Vasishta03/leakscan/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/Vasishta03/leakscan/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/Vasishta03/leakscan/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Vasishta03/leakscan/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Vasishta03/leakscan/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/Vasishta03/leakscan/compare/v0.3.0...v0.3.1

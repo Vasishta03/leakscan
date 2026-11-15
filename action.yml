@@ -1,4 +1,4 @@
-name: leakscan
+name: Leakscan Secret Scanner
 description: Find leaked API keys and secrets in your code, PR diffs and git history. Uploads SARIF to code scanning.
 author: Vasishta03
 branding:

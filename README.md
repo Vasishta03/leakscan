@@ -78,7 +78,7 @@ pre-commit:
 ```yaml
 repos:
   - repo: https://github.com/Vasishta03/leakscan
-    rev: v0.5.0
+    rev: v0.5.1
     hooks:
       - id: leakscan
 ```
