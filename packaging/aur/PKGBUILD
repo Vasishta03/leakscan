@@ -1,0 +1,32 @@
+# Maintainer: Vasishta Nandipati
+pkgname=python-leakscan
+_name=leakscan
+pkgver=0.5.0
+pkgrel=1
+pkgdesc="Find leaked API keys and secrets in code, git history, notebooks, archives, Docker images and packages"
+arch=('any')
+url="https://github.com/Vasishta03/leakscan"
+license=('MIT')
+depends=('python' 'python-click' 'python-rich' 'python-requests' 'python-yaml' 'git')
+makedepends=('python-build' 'python-installer' 'python-setuptools' 'python-wheel')
+checkdepends=('python-pytest')
+source=("https://files.pythonhosted.org/packages/source/${_name::1}/${_name}/${_name}-${pkgver}.tar.gz")
+sha256sums=('SDIST_SHA256')
+
+build() {
+  cd "${_name}-${pkgver}"
+  python -m build --wheel --no-isolation
+}
+
+package() {
+  cd "${_name}-${pkgver}"
+  python -m installer --destdir="$pkgdir" dist/*.whl
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -d "$pkgdir/usr/share/bash-completion/completions" "$pkgdir/usr/share/zsh/site-functions" "$pkgdir/usr/share/fish/vendor_completions.d"
+  PYTHONPATH="$pkgdir$(python -c 'import site;print(site.getsitepackages()[0])')" \
+    python -m scanner completion bash > "$pkgdir/usr/share/bash-completion/completions/leakscan"
+  PYTHONPATH="$pkgdir$(python -c 'import site;print(site.getsitepackages()[0])')" \
+    python -m scanner completion zsh > "$pkgdir/usr/share/zsh/site-functions/_leakscan"
+  PYTHONPATH="$pkgdir$(python -c 'import site;print(site.getsitepackages()[0])')" \
+    python -m scanner completion fish > "$pkgdir/usr/share/fish/vendor_completions.d/leakscan.fish"
+}

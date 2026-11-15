@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vasishta03.github.io/leakscan/schemas/config.schema.json",
+  "title": "leakscan configuration (.leakscan.yaml)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "extends": {"type": "string", "description": "Path to a base config, relative to this file."},
+    "severity": {"enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW"], "description": "Only report findings at or above this level."},
+    "fail_on": {"enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW"], "description": "Exit 1 when a finding is at or above this level."},
+    "entropy_threshold": {"type": "number", "minimum": 0, "maximum": 8},
+    "no_entropy": {"type": "boolean"},
+    "decode": {"type": "boolean", "description": "Decode base64/hex/URL-encoded values before matching."},
+    "archives": {"type": "boolean", "description": "Scan inside archives."},
+    "exclude_paths": {"type": "array", "items": {"type": "string"}, "description": "gitignore-style globs to skip."},
+    "disable_rules": {"type": "array", "items": {"type": "string", "pattern": "^LS-[A-Z0-9-]+$"}},
+    "allowlist": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "regexes": {"type": "array", "items": {"type": "string"}, "description": "Matches on the secret value are ignored."},
+        "paths": {"type": "array", "items": {"type": "string"}, "description": "Globs whose findings are ignored."},
+        "commits": {"type": "array", "items": {"type": "string"}, "description": "Commit SHA prefixes ignored in history scans."},
+        "stopwords": {"type": "array", "items": {"type": "string"}, "description": "Values containing any of these words are ignored."}
+      }
+    },
+    "overrides": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["paths"],
+        "additionalProperties": false,
+        "properties": {
+          "paths": {"type": "array", "items": {"type": "string"}},
+          "disable_rules": {"type": "array", "items": {"type": "string"}},
+          "allowlist": {"type": "object", "properties": {"regexes": {"type": "array", "items": {"type": "string"}}}}
+        }
+      }
+    },
+    "rules": {"$ref": "#/$defs/rules"},
+    "custom_patterns": {"$ref": "#/$defs/rules"}
+  },
+  "$defs": {
+    "rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "regex"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[A-Z][A-Z0-9-]+$"},
+          "name": {"type": "string"},
+          "regex": {"type": "string"},
+          "severity": {"enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW"]},
+          "description": {"type": "string"},
+          "path": {"type": "string", "description": "Only apply to files whose path matches this regex."},
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+          "examples": {"type": "object", "properties": {
+            "positive": {"type": "array", "items": {"type": "string"}},
+            "negative": {"type": "array", "items": {"type": "string"}}}}
+        }
+      }
+    }
+  }
+}

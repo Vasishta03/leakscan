@@ -1,0 +1,12 @@
+# Comparison and benchmarks
+
+The feature table is in the [README](https://github.com/Vasishta03/leakscan#how-it-compares). Short version:
+
+- **gitleaks** is faster, ships as a single binary, and also does staged scans, decoding and archives.
+  Pick it if speed is what matters.
+- **trufflehog** has 800+ detectors with live verification, plus sources like S3, GCS, Postman, Jenkins and Hugging
+  Face. Pick it when you need verification breadth.
+- **leakscan** is pip-installable with a Python API. It's the only one of the three with notebook cell locations,
+  PyPI and npm package scanning, blast-radius and rotation guidance, agent hooks and an MCP server.
+
+

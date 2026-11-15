@@ -1,0 +1,50 @@
+site_name: leakscan
+site_description: Find leaked API keys and secrets in code, git history, notebooks, archives, Docker images and packages.
+site_url: https://vasishta03.github.io/leakscan/
+repo_url: https://github.com/Vasishta03/leakscan
+repo_name: Vasishta03/leakscan
+edit_uri: edit/main/docs/
+copyright: MIT licensed
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: red
+      toggle: {icon: material/weather-night, name: Dark mode}
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: red
+      toggle: {icon: material/weather-sunny, name: Light mode}
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc: {permalink: true}
+  - pymdownx.highlight
+  - pymdownx.superfences
+
+nav:
+  - Home: index.md
+  - Install: install.md
+  - Scanning: usage.md
+  - Configuration: config.md
+  - Outputs and exit codes: outputs.md
+  - CI recipes: ci.md
+  - Verification: verification.md
+  - Python API: api.md
+  - AI coding agents: agents.md
+  - Notifications: notifications.md
+  - Rules: rules/index.md
+  - CLI reference: cli.md
+  - Comparison and benchmarks: comparison.md
+  - Privacy: privacy.md
+  - FAQ: faq.md
+  - Contributing: contributing.md
+  - Changelog: changelog.md

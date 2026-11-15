@@ -1,0 +1,52 @@
+{% set name = "leakscan" %}
+{% set version = "0.5.0" %}
+
+package:
+  name: {{ name|lower }}
+  version: {{ version }}
+
+source:
+  url: https://pypi.org/packages/source/{{ name[0] }}/{{ name }}/leakscan-{{ version }}.tar.gz
+  sha256: SDIST_SHA256
+
+build:
+  noarch: python
+  number: 0
+  script: {{ PYTHON }} -m pip install . -vv --no-deps --no-build-isolation
+  entry_points:
+    - leakscan = scanner.cli:cli
+
+requirements:
+  host:
+    - python {{ python_min }}
+    - pip
+    - setuptools >=68
+    - wheel
+  run:
+    - python >={{ python_min }}
+    - click >=8.1
+    - rich >=13.0
+    - requests >=2.31
+    - pyyaml >=6.0
+
+test:
+  imports:
+    - leakscan
+    - scanner
+  commands:
+    - leakscan --version
+    - leakscan rules list --json
+  requires:
+    - python {{ python_min }}
+
+about:
+  home: https://github.com/Vasishta03/leakscan
+  summary: Find leaked API keys and secrets in code, git history, notebooks, archives, Docker images and packages
+  license: MIT
+  license_file: LICENSE
+  doc_url: https://vasishta03.github.io/leakscan/
+  dev_url: https://github.com/Vasishta03/leakscan
+
+extra:
+  recipe-maintainers:
+    - Vasishta03

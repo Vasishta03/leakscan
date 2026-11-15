@@ -4,25 +4,88 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "leakscan"
-version = "0.4.0"
-description = "CLI tool to detect leaked secrets and API keys in codebases and public GitHub repos, including git history and staged changes"
+dynamic = ["version"]
+description = "Find leaked API keys and secrets in code, git history, notebooks, archives, Docker images and packages"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
+authors = [{ name = "Vasishta Nandipati" }]
+keywords = [
+    "secrets", "secret-scanning", "api-keys", "credentials", "security", "devsecops", "git", "pre-commit",
+    "sarif", "gitleaks-alternative", "trufflehog-alternative", "jupyter", "docker", "ci",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Version Control :: Git",
+    "Typing :: Typed",
+]
+# click: CLI. rich: terminal output and progress. requests: --verify, GitHub API,
+# package downloads, webhooks. pyyaml: .leakscan.yaml and rule packs.
 dependencies = [
     "click>=8.1",
     "rich>=13.0",
     "requests>=2.31",
-    "tqdm>=4.65",
+    "pyyaml>=6.0",
 ]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "pytest-cov", "ruff>=0.6", "mypy>=1.10", "types-requests", "types-PyYAML"]
+docs = ["mkdocs-material>=9.5"]
+
+[project.urls]
+Homepage = "https://github.com/Vasishta03/leakscan"
+Documentation = "https://vasishta03.github.io/leakscan/"
+Changelog = "https://github.com/Vasishta03/leakscan/blob/main/CHANGELOG.md"
+Issues = "https://github.com/Vasishta03/leakscan/issues"
+Source = "https://github.com/Vasishta03/leakscan"
 
 [project.scripts]
 leakscan = "scanner.cli:cli"
 
-[project.optional-dependencies]
-dev = ["pytest>=7.0", "pytest-cov"]
-yaml = ["pyyaml>=6.0"]
+[tool.setuptools.dynamic]
+version = { attr = "scanner.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["scanner*"]
+include = ["scanner*", "leakscan*"]
+
+[tool.setuptools.package-data]
+scanner = ["py.typed", "schemas/*.json"]
+leakscan = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["scanner", "leakscan"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-exclude = ["benchmarks/work"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "I"]
+ignore = ["E501", "B008", "B905"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402", "B011"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+check_untyped_defs = false
+warn_unused_ignores = false
+files = ["scanner", "leakscan"]

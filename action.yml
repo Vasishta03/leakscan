@@ -1,0 +1,143 @@
+name: leakscan
+description: Find leaked API keys and secrets in your code, PR diffs and git history. Uploads SARIF to code scanning.
+author: Vasishta03
+branding:
+  icon: shield
+  color: red
+
+inputs:
+  path:
+    description: Path to scan.
+    default: "."
+  version:
+    description: leakscan version from PyPI (e.g. 0.5.0). Empty means latest. "local" installs from the action checkout.
+    default: ""
+  mode:
+    description: "full (whole tree), pr (only lines added in the pull request), or history (tree plus git history)."
+    default: full
+  fail-on:
+    description: Fail the step when a finding is at or above this severity (CRITICAL, HIGH, MEDIUM, LOW, or none).
+    default: HIGH
+  severity:
+    description: Only report findings at or above this severity.
+    default: ""
+  depth:
+    description: Commits to scan in history mode.
+    default: "500"
+  baseline:
+    description: Baseline file of known findings to ignore.
+    default: ""
+  config:
+    description: Path to a .leakscan.yaml.
+    default: ""
+  sarif:
+    description: Upload results to GitHub code scanning (needs security-events write).
+    default: "true"
+  pr-comment:
+    description: Post or update a summary comment on the pull request (needs pull-requests write).
+    default: "false"
+  github-token:
+    description: Token used for the PR comment.
+    default: ${{ github.token }}
+  args:
+    description: Extra arguments passed to `leakscan scan`.
+    default: ""
+
+outputs:
+  findings:
+    description: Number of findings.
+    value: ${{ steps.scan.outputs.findings }}
+  exit-code:
+    description: "leakscan exit code: 0 clean, 1 findings at or above fail-on, 2 error."
+    value: ${{ steps.scan.outputs.exit-code }}
+  sarif-file:
+    description: Path of the SARIF report.
+    value: ${{ steps.scan.outputs.sarif }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install leakscan
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        if [ "$VERSION" = "local" ]; then pip install --quiet "$ACTION_PATH"
+        elif [ -n "$VERSION" ]; then pip install --quiet "leakscan==$VERSION"
+        else pip install --quiet leakscan; fi
+        leakscan --version
+
+    - name: Scan
+      id: scan
+      shell: bash
+      env:
+        SCAN_PATH: ${{ inputs.path }}
+        MODE: ${{ inputs.mode }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        SEVERITY: ${{ inputs.severity }}
+        DEPTH: ${{ inputs.depth }}
+        BASELINE: ${{ inputs.baseline }}
+        CONFIG: ${{ inputs.config }}
+        EXTRA: ${{ inputs.args }}
+        EVENT: ${{ github.event_name }}
+      run: |
+        out="$RUNNER_TEMP/leakscan"
+        mkdir -p "$out"
+        args=(scan "$SCAN_PATH" --no-progress --brief --format json --output "$out/results.json"
+              --also "sarif:$out/results.sarif" --also "markdown:$out/summary.md")
+        case "$MODE" in
+          pr) if [ "$EVENT" = "pull_request" ] || [ "$EVENT" = "pull_request_target" ]; then args+=(--pr); fi ;;
+          history) args+=(--history --depth "$DEPTH") ;;
+        esac
+        if [ "$FAIL_ON" = "none" ]; then args+=(--exit-zero); else args+=(--fail-on "$FAIL_ON"); fi
+        [ -n "$SEVERITY" ] && args+=(--severity "$SEVERITY")
+        [ -n "$BASELINE" ] && args+=(--baseline "$BASELINE")
+        [ -n "$CONFIG" ] && args+=(--config "$CONFIG")
+        # shellcheck disable=SC2206
+        [ -n "$EXTRA" ] && args+=($EXTRA)
+        set +e
+        leakscan "${args[@]}"
+        code=$?
+        set -e
+        findings=$(python -c "import json,sys;print(json.load(open(sys.argv[1]))['summary']['total_findings'])" "$out/results.json" 2>/dev/null || echo 0)
+        {
+          echo "exit-code=$code"
+          echo "findings=$findings"
+          echo "sarif=$out/results.sarif"
+          echo "summary=$out/summary.md"
+        } >> "$GITHUB_OUTPUT"
+        cat "$out/summary.md" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+
+    - name: Upload SARIF
+      if: always() && inputs.sarif == 'true' && steps.scan.outputs.exit-code != '2'
+      continue-on-error: true
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ steps.scan.outputs.sarif }}
+        category: leakscan
+
+    - name: Comment on pull request
+      if: always() && inputs.pr-comment == 'true' && github.event.pull_request.number
+      continue-on-error: true
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
+        SUMMARY: ${{ steps.scan.outputs.summary }}
+      run: |
+        body="$(printf '<!-- leakscan -->\n%s' "$(cat "$SUMMARY")")"
+        id=$(gh api "repos/$REPO/issues/$PR/comments" --paginate --jq '.[] | select(.body | startswith("<!-- leakscan -->")) | .id' | head -n1)
+        if [ -n "$id" ]; then gh api -X PATCH "repos/$REPO/issues/comments/$id" -f body="$body" >/dev/null
+        else gh api "repos/$REPO/issues/$PR/comments" -f body="$body" >/dev/null; fi
+
+    - name: Result
+      shell: bash
+      env:
+        CODE: ${{ steps.scan.outputs.exit-code }}
+      run: exit "${CODE:-2}"

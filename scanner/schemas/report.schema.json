@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vasishta03.github.io/leakscan/schemas/report.schema.json",
+  "title": "leakscan JSON report",
+  "description": "Output of `leakscan scan --format json`. schema_version follows semver: minor bumps only add fields.",
+  "type": "object",
+  "required": ["schema_version", "tool", "summary", "findings"],
+  "properties": {
+    "schema_version": {"type": "string", "const": "1.0"},
+    "tool": {"type": "object", "required": ["name", "version"], "properties": {"name": {"const": "leakscan"}, "version": {"type": "string"}}},
+    "summary": {
+      "type": "object",
+      "required": ["files_scanned", "commits_scanned", "files_skipped", "total_findings", "by_severity"],
+      "properties": {
+        "files_scanned": {"type": "integer"},
+        "commits_scanned": {"type": "integer"},
+        "files_skipped": {"type": "integer"},
+        "files_cached": {"type": "integer"},
+        "total_findings": {"type": "integer"},
+        "errors": {"type": "integer"},
+        "by_severity": {"type": "object", "properties": {
+          "CRITICAL": {"type": "integer"}, "HIGH": {"type": "integer"}, "MEDIUM": {"type": "integer"}, "LOW": {"type": "integer"}}}
+      }
+    },
+    "findings": {"type": "array", "items": {"$ref": "#/$defs/finding"}},
+    "errors": {"type": "array", "items": {"type": "string"}}
+  },
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "required": ["rule_id", "severity", "confidence", "type", "file", "line", "match", "source", "fingerprint"],
+      "properties": {
+        "rule_id": {"type": "string"},
+        "severity": {"enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW"]},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "type": {"type": "string"},
+        "file": {"type": "string", "description": "Path relative to the scan root. Archive members use 'archive.zip!member'."},
+        "line": {"type": "integer"},
+        "match": {"type": "string", "description": "Matched text, masked when --redact is used."},
+        "entropy": {"type": ["number", "null"]},
+        "source": {"type": "string", "description": "regex, entropy, history, staged, diff, pr, decoded-base64, decoded-hex, decoded-url"},
+        "commit": {"type": ["string", "null"]},
+        "verified": {"type": ["string", "null"], "description": "Deprecated: LIVE/REVOKED. Use verification.status."},
+        "verification": {
+          "type": ["object", "null"],
+          "properties": {
+            "status": {"enum": ["active", "inactive", "unknown", "error"]},
+            "checked_at": {"type": ["string", "null"], "format": "date-time"},
+            "error": {"type": ["string", "null"]}
+          }
+        },
+        "fingerprint": {"type": "string", "description": "sha256(type:match)[:16], stable across runs; used by baselines."},
+        "blast_radius": {"type": "string"},
+        "rotation_url": {"type": "string"},
+        "blame": {"type": ["object", "null"]},
+        "extra": {"type": "object", "description": "Source-specific context: cell, output_type, layer, repository, encoding, validation, jwt_expired."}
+      }
+    }
+  }
+}

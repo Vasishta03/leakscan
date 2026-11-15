@@ -27,7 +27,7 @@ fi
 
 if has "$CMD"; then
     info ""
-    info "leakscan installed successfully. Run: $CMD --help"
+    info "leakscan installed. Try: $CMD scan ."
 else
     info ""
     info "Installed. If '$CMD' is not found, add the following to your shell profile:"

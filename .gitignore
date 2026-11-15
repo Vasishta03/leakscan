@@ -12,3 +12,14 @@ venv/
 .pytest_cache/
 .coverage
 htmlcov/
+benchmarks/work/
+.leakscan-cache
+site/
+docs/cli.md
+docs/rules/
+docs/verification.md
+docs/comparison.md
+docs/changelog.md
+docs/contributing.md
+docs/schemas/
+.code-review-graph/

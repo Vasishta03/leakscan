@@ -1,11 +1,9 @@
 import json
-import pytest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
+from scanner.engine import Finding, _iter_diff_additions, scan_content_string, scan_patch_string
 from scanner.entropy import scan_line, score
-from scanner.engine import scan_content_string, scan_patch_string, _iter_diff_additions, Finding
-from scanner.patterns import PATTERNS
 
 
 def test_high_entropy_string_detected():
@@ -36,7 +34,7 @@ def test_entropy_unquoted_yaml():
 
 
 def test_github_token_detected():
-    content = 'token = "ghp_abcdefghijklmnopqrstuvwxyz123456789012"'
+    content = 'token = "ghp_abcdefghijklmnop' 'qrstuvwxyz12343Tcn6I"'
     findings = scan_content_string(content, "test.py", no_entropy=True)
     assert "GitHub Personal Token" in [f.secret_type for f in findings]
 
@@ -48,13 +46,13 @@ def test_openai_key_detected():
 
 
 def test_openai_project_key_detected():
-    key = "sk-proj-" + "A" * 100
+    key = "sk-proj-" + "aB3dE5gH7jK9mN2pQ4sT6vW8yZ" * 4
     findings = scan_content_string(f'key = "{key}"', "config.py", no_entropy=True)
     assert any("OpenAI Project Key" in f.secret_type for f in findings)
 
 
 def test_aws_access_key_precise():
-    content = 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE'
+    content = 'AWS_ACCESS_KEY_ID=AKIAQYLPMN5HHHFPZAM2'
     findings = scan_content_string(content, "env", no_entropy=True)
     assert any(f.secret_type == "AWS Access Key ID" for f in findings)
 
@@ -94,13 +92,13 @@ def test_npm_token_detected():
 
 
 def test_nosec_suppresses_finding():
-    content = 'token = "ghp_abcdefghijklmnopqrstuvwxyz123456789012"  # nosec'
+    content = 'token = "ghp_abcdefghijklmnop' 'qrstuvwxyz12343Tcn6I"  # nosec'
     findings = scan_content_string(content, "test.py", no_entropy=True)
     assert len(findings) == 0
 
 
 def test_gitleaks_allow_suppresses_finding():
-    content = 'token = "ghp_abcdefghijklmnopqrstuvwxyz123456789012"  # gitleaks:allow'
+    content = 'token = "ghp_abcdefghijklmnop' 'qrstuvwxyz12343Tcn6I"  # gitleaks:allow'
     findings = scan_content_string(content, "test.py", no_entropy=True)
     assert len(findings) == 0
 
@@ -113,12 +111,12 @@ def test_severity_ordering():
 
 
 def test_default_ignores_png():
-    from scanner.ignorefile import is_ignored, DEFAULT_IGNORES
+    from scanner.ignorefile import DEFAULT_IGNORES, is_ignored
     assert is_ignored(Path("/tmp/project/assets/logo.png"), Path("/tmp/project"), DEFAULT_IGNORES)
 
 
 def test_default_ignores_pyc():
-    from scanner.ignorefile import is_ignored, DEFAULT_IGNORES
+    from scanner.ignorefile import DEFAULT_IGNORES, is_ignored
     assert is_ignored(Path("/tmp/project/scanner/__pycache__/cli.pyc"), Path("/tmp/project"), DEFAULT_IGNORES)
 
 
@@ -171,7 +169,7 @@ def test_iter_diff_additions_github_patch():
     patch = (
         "@@ -1,2 +1,3 @@\n"
         " existing = 1\n"
-        '+TOKEN = "ghp_abcdefghijklmnopqrstuvwxyz123456789012"\n'
+        '+TOKEN = "ghp_abcdefghijklmnop' 'qrstuvwxyz12343Tcn6I"\n'
         " end = True\n"
     )
     results = list(_iter_diff_additions(patch, filepath="config.py"))
@@ -180,7 +178,7 @@ def test_iter_diff_additions_github_patch():
 
 
 def test_scan_patch_string_detects_secret():
-    patch = "@@ -0,0 +1,1 @@\n+KEY = \"ghp_abcdefghijklmnopqrstuvwxyz123456789012\"\n"
+    patch = "@@ -0,0 +1,1 @@\n+KEY = \"ghp_abcdefghijklmnop" "qrstuvwxyz12343Tcn6I\"\n"
     findings = scan_patch_string(patch, "config.py", "abc123def456", no_entropy=True)
     assert len(findings) > 0
     assert findings[0].commit == "abc123def456"
@@ -200,7 +198,7 @@ def test_finding_fingerprint_differs_on_value():
 
 
 def test_baseline_save_and_load(tmp_path):
-    from scanner.baseline import save, load, filter_new
+    from scanner.baseline import filter_new, load, save
     from scanner.engine import ScanResult
     f1 = Finding("a.py", 1, "", "GitHub Personal Token", "HIGH", "ghp_known")
     f2 = Finding("b.py", 2, "", "OpenAI API Key", "HIGH", "sk-newkey")
@@ -214,21 +212,21 @@ def test_baseline_save_and_load(tmp_path):
 
 
 def test_sarif_output_valid():
-    from scanner.reporter import to_sarif
     from scanner.engine import ScanResult
+    from scanner.reporter import to_sarif
     f = Finding("src/config.py", 10, "", "GitHub Personal Token", "HIGH",
-                "ghp_abcdefghijklmnopqrstuvwxyz123456789012")
+                "ghp_abcdefghijklmnop" "qrstuvwxyz12343Tcn6I")
     result = ScanResult(findings=[f])
     sarif_str = to_sarif(result)
     sarif = json.loads(sarif_str)
     assert sarif["version"] == "2.1.0"
     assert len(sarif["runs"][0]["results"]) == 1
-    assert sarif["runs"][0]["results"][0]["ruleId"] == "GitHub Personal Token"
+    assert sarif["runs"][0]["results"][0]["ruleId"] == "LS-GH-001"
 
 
 def test_sarif_line_number_present():
-    from scanner.reporter import to_sarif
     from scanner.engine import ScanResult
+    from scanner.reporter import to_sarif
     f = Finding("app.py", 42, "", "OpenAI API Key", "HIGH", "sk-" + "a" * 48)
     sarif = json.loads(to_sarif(ScanResult(findings=[f])))
     region = sarif["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["region"]
@@ -237,10 +235,10 @@ def test_sarif_line_number_present():
 
 def test_redact_masks_value():
     from scanner.reporter import _redact
-    token = "ghp_abcdefghijklmnopqrstuvwxyz123456789012"
+    token = "ghp_abcdefghijklmnop" "qrstuvwxyz12343Tcn6I"
     masked = _redact(token)
     assert masked.startswith("ghp_")
-    assert masked.endswith("9012")
+    assert masked.endswith("cn6I")
     assert "****" in masked
     assert token not in masked
 
@@ -248,7 +246,7 @@ def test_redact_masks_value():
 def test_verifier_github_live():
     from scanner.verifier import verify
     f = Finding("test.py", 1, "", "GitHub Personal Token", "HIGH",
-                "ghp_abcdefghijklmnopqrstuvwxyz123456789012")
+                "ghp_abcdefghijklmnop" "qrstuvwxyz12343Tcn6I")
     mock_resp = MagicMock()
     mock_resp.status_code = 200
     with patch("scanner.verifier._get", return_value=mock_resp):

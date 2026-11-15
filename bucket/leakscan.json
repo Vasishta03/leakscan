@@ -1,0 +1,25 @@
+{
+    "version": "0.5.0",
+    "description": "Find leaked API keys and secrets in code, git history, notebooks, archives, Docker images and packages",
+    "homepage": "https://github.com/Vasishta03/leakscan",
+    "license": "MIT",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/Vasishta03/leakscan/releases/download/v0.5.0/leakscan-windows-x86_64.exe#/leakscan.exe",
+            "hash": "WINDOWS_EXE_SHA256"
+        }
+    },
+    "bin": "leakscan.exe",
+    "checkver": "github",
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/Vasishta03/leakscan/releases/download/v$version/leakscan-windows-x86_64.exe#/leakscan.exe",
+                "hash": {
+                    "url": "https://github.com/Vasishta03/leakscan/releases/download/v$version/SHA256SUMS",
+                    "regex": "$sha256\\s+leakscan-windows-x86_64.exe"
+                }
+            }
+        }
+    }
+}

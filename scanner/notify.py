@@ -28,6 +28,9 @@ SEVERITY_EMOJI = {
     "LOW": ":white_circle:",
 }
 CLEAN_COLOR_HEX = 0x2ECC71
+_RC_KEYS = {"slack": "SLACK_WEBHOOK_URL", "discord": "DISCORD_WEBHOOK_URL", "teams": "TEAMS_WEBHOOK_URL",
+            "webhook": "WEBHOOK_URL"}
+TARGETS = ("slack", "discord", "teams", "webhook", "email")
 
 
 def _rc_path(path: Optional[Path] = None) -> Path:
@@ -61,8 +64,7 @@ def save_webhook(kind: str, url: str, path: Optional[Path] = None) -> Path:
     """Persist a webhook URL to ~/.leakscanrc, creating or updating the file."""
     rc_path = _rc_path(path)
     config = load_rc(rc_path)
-    key = "SLACK_WEBHOOK_URL" if kind == "slack" else "DISCORD_WEBHOOK_URL"
-    config[key] = url
+    config[_RC_KEYS.get(kind, "WEBHOOK_URL")] = url
     lines = [f'{k}="{v}"' for k, v in config.items()]
     rc_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     try:
@@ -76,8 +78,7 @@ def resolve_webhook(kind: str, explicit: Optional[str]) -> Optional[str]:
     """Return the webhook URL to use: an explicit CLI value, or one saved in ~/.leakscanrc."""
     if explicit:
         return explicit
-    key = "SLACK_WEBHOOK_URL" if kind == "slack" else "DISCORD_WEBHOOK_URL"
-    return load_rc().get(key) or None
+    return load_rc().get(_RC_KEYS.get(kind, "WEBHOOK_URL")) or None
 
 
 def _severity_counts(result: ScanResult) -> dict[str, int]:
@@ -198,6 +199,86 @@ def _post(webhook_url: str, payload: dict) -> bool:
         return False
 
 
+def build_generic_payload(result: ScanResult, target: str) -> dict:
+    from scanner.reporter import _redact
+    return {
+        "tool": "leakscan",
+        "target": target,
+        "summary": _severity_counts(result),
+        "total": len(result.findings),
+        "findings": [
+            {"rule_id": f.rule_id, "severity": f.severity, "type": f.secret_type, "file": f.file,
+             "line": f.line_number, "match": _redact(f.matched_value), "fingerprint": f.fingerprint()}
+            for f in _top_findings(result.findings, 100)
+        ],
+    }
+
+
+def build_teams_payload(result: ScanResult, target: str, clean: bool = False) -> dict:
+    counts = _severity_counts(result)
+    title = f"leakscan: no secrets found in {target}" if clean else f"leakscan: {len(result.findings)} secret(s) in {target}"
+    facts = [{"title": f.severity, "value": f"{f.secret_type} - {f.file}:{f.line_number}"}
+             for f in _top_findings(result.findings)]
+    body: list[dict] = [
+        {"type": "TextBlock", "text": title, "weight": "Bolder", "size": "Medium", "wrap": True},
+        {"type": "TextBlock", "text": _summary_line(counts), "wrap": True},
+    ]
+    if facts:
+        body.append({"type": "FactSet", "facts": facts})
+    return {"type": "message", "attachments": [{
+        "contentType": "application/vnd.microsoft.card.adaptive",
+        "content": {"$schema": "http://adaptivecards.io/schemas/adaptive-card.json", "type": "AdaptiveCard",
+                    "version": "1.4", "body": body},
+    }]}
+
+
+def send_email(result: ScanResult, target: str, rc: Optional[dict] = None) -> str:
+    """Send a plain-text summary over SMTP. Settings come from env vars or ~/.leakscanrc:
+    LEAKSCAN_SMTP_HOST, LEAKSCAN_SMTP_PORT, LEAKSCAN_SMTP_USER, LEAKSCAN_SMTP_PASSWORD,
+    LEAKSCAN_EMAIL_FROM, LEAKSCAN_EMAIL_TO (comma separated)."""
+    import smtplib
+    import ssl
+    from email.message import EmailMessage
+
+    rc = rc if rc is not None else load_rc()
+
+    def get(key: str) -> Optional[str]:
+        return os.environ.get(key) or rc.get(key)
+
+    host, to = get("LEAKSCAN_SMTP_HOST"), get("LEAKSCAN_EMAIL_TO")
+    if not host or not to:
+        return "--notify email needs LEAKSCAN_SMTP_HOST and LEAKSCAN_EMAIL_TO (env or ~/.leakscanrc)."
+    port = int(get("LEAKSCAN_SMTP_PORT") or 587)
+    msg = EmailMessage()
+    msg["Subject"] = f"leakscan: {len(result.findings)} secret(s) in {target}"
+    msg["From"] = get("LEAKSCAN_EMAIL_FROM") or get("LEAKSCAN_SMTP_USER") or "leakscan@localhost"
+    msg["To"] = to
+    lines = [f"{_summary_line(_severity_counts(result))} in {target}", ""]
+    lines += [f"[{f.severity}] {f.rule_id} {f.secret_type} - {f.file}:{f.line_number}"
+              for f in _top_findings(result.findings, 50)]
+    msg.set_content("\n".join(lines))
+    try:
+        if port == 465:
+            server: smtplib.SMTP = smtplib.SMTP_SSL(host, port, timeout=15, context=ssl.create_default_context())
+        else:
+            server = smtplib.SMTP(host, port, timeout=15)
+            server.starttls(context=ssl.create_default_context())
+        with server:
+            user, pw = get("LEAKSCAN_SMTP_USER"), get("LEAKSCAN_SMTP_PASSWORD")
+            if user and pw:
+                server.login(user, pw)
+            server.send_message(msg)
+        return "Sent email notification."
+    except (OSError, smtplib.SMTPException) as e:
+        return f"Failed to send email notification ({e.__class__.__name__})."
+
+
+def _parse_targets(notify: str) -> list[str]:
+    if notify == "both":
+        return ["slack", "discord"]
+    return [t.strip() for t in notify.split(",") if t.strip()]
+
+
 def send_notifications(
     result: ScanResult,
     target: str,
@@ -205,47 +286,42 @@ def send_notifications(
     slack_webhook: Optional[str] = None,
     discord_webhook: Optional[str] = None,
     notify_clean: bool = False,
+    teams_webhook: Optional[str] = None,
+    generic_webhook: Optional[str] = None,
 ) -> list[str]:
-    """Send Slack and/or Discord webhook notifications for a scan result.
-
-    Returns a list of human-readable status messages (one per webhook
-    attempted) for the caller to display. Never raises: network errors
-    and missing webhook URLs are reported as messages, not exceptions.
-    """
+    """Send notifications for a scan result. Returns status messages; never raises."""
     if not notify:
         return []
-
     if not result.findings and not notify_clean:
         return []
 
-    kinds = []
-    if notify in ("slack", "both"):
-        kinds.append("slack")
-    if notify in ("discord", "both"):
-        kinds.append("discord")
-
+    explicit = {"slack": slack_webhook, "discord": discord_webhook, "teams": teams_webhook, "webhook": generic_webhook}
     messages: list[str] = []
-    for kind in kinds:
-        explicit = slack_webhook if kind == "slack" else discord_webhook
-        url = resolve_webhook(kind, explicit)
+    clean = not result.findings
+    for kind in _parse_targets(notify):
+        if kind == "email":
+            messages.append(send_email(result, target))
+            continue
+        if kind not in explicit:
+            messages.append(f"Unknown notification target '{kind}' (use {', '.join(TARGETS)}).")
+            continue
+        url = resolve_webhook(kind, explicit[kind])
         if not url:
-            flag = "--slack-webhook" if kind == "slack" else "--discord-webhook"
             messages.append(
                 f"--notify {kind} requested but no webhook URL is configured "
-                f"(pass {flag} or save one to ~/.leakscanrc)."
+                f"(pass --{kind}-webhook or save {_RC_KEYS[kind]} to ~/.leakscanrc)."
             )
             continue
-
-        clean = not result.findings
-        payload = (
-            build_slack_payload(result, target, clean=clean)
-            if kind == "slack"
-            else build_discord_payload(result, target, clean=clean)
-        )
-
+        if kind == "slack":
+            payload = build_slack_payload(result, target, clean=clean)
+        elif kind == "discord":
+            payload = build_discord_payload(result, target, clean=clean)
+        elif kind == "teams":
+            payload = build_teams_payload(result, target, clean=clean)
+        else:
+            payload = build_generic_payload(result, target)
         if _post(url, payload):
             messages.append(f"Sent {kind} notification.")
         else:
             messages.append(f"Failed to send {kind} notification (request error or non-2xx response).")
-
     return messages

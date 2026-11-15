@@ -1,0 +1,26 @@
+name: New rule
+description: Ask for (or propose) detection of a new secret type
+labels: [new pattern, good first issue]
+body:
+  - type: input
+    id: service
+    attributes:
+      label: Service
+      placeholder: Acme Cloud
+    validations:
+      required: true
+  - type: textarea
+    id: format
+    attributes:
+      label: Token format
+      description: Prefix, length, character set, and a link to the provider's docs. No real tokens.
+    validations:
+      required: true
+  - type: input
+    id: rotate
+    attributes:
+      label: Where to rotate it
+  - type: input
+    id: verify
+    attributes:
+      label: Read-only endpoint to verify it (optional)

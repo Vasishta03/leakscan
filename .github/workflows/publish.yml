@@ -1,27 +1,53 @@
-name: Publish to PyPI
+# Filename and the `pypi` environment are registered as the PyPI trusted publisher. Keep both.
+name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - run: pip install build
+      - name: Check tag matches version
+        run: |
+          v=$(python -c "import scanner;print(scanner.__version__)")
+          [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME != version $v"; exit 1; }
+      - run: pip install build cyclonedx-bom
       - run: python -m build
-
+      - name: SBOM (CycloneDX)
+        run: |
+          python -m venv /tmp/sbom
+          /tmp/sbom/bin/pip install --quiet dist/*.whl
+          mkdir -p sbom
+          cyclonedx-py environment /tmp/sbom --output-format JSON -o "sbom/leakscan-${GITHUB_REF_NAME}.cdx.json"
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*
+      - uses: actions/attest-sbom@v2
+        with:
+          subject-path: dist/*.whl
+          sbom-path: sbom/leakscan-${{ github.ref_name }}.cdx.json
+        continue-on-error: true
       - uses: actions/upload-artifact@v4
         with:
           name: dist
           path: dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom/
 
   publish:
     needs: build
@@ -34,5 +60,88 @@ jobs:
         with:
           name: dist
           path: dist/
-
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          attestations: true
+
+  binaries:
+    needs: build
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: leakscan-linux-x86_64
+          - os: macos-latest
+            name: leakscan-macos-arm64
+          - os: windows-latest
+            name: leakscan-windows-x86_64.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install . pyinstaller
+      - run: pyinstaller --onefile --name leakscan --collect-data scanner scripts/pyinstaller_entry.py
+      - name: Rename
+        shell: bash
+        run: |
+          src=dist/leakscan; [ -f dist/leakscan.exe ] && src=dist/leakscan.exe
+          mkdir -p bin && cp "$src" "bin/${{ matrix.name }}"
+          "bin/${{ matrix.name }}" --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: bin/
+
+  release:
+    needs: [publish, binaries]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: artifacts/leakscan-*
+      - uses: sigstore/gh-action-sigstore-python@v3.0.0
+        with:
+          inputs: artifacts/*.whl artifacts/*.tar.gz artifacts/leakscan-linux-x86_64 artifacts/leakscan-macos-arm64 artifacts/leakscan-windows-x86_64.exe
+      - name: Checksums and notes
+        run: |
+          cd artifacts && sha256sum leakscan* > SHA256SUMS && cd ..
+          python scripts/changelog_section.py "${GITHUB_REF_NAME#v}" > notes.md
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" artifacts/* --title "leakscan $GITHUB_REF_NAME" --notes-file notes.md --verify-tag
+
+  homebrew:
+    needs: publish
+    runs-on: ubuntu-latest
+    if: ${{ vars.HOMEBREW_TAP_ENABLED == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/checkout@v4
+        with:
+          repository: Vasishta03/homebrew-leakscan
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+      - name: Update formula
+        run: |
+          sleep 60
+          python scripts/update_homebrew.py "${GITHUB_REF_NAME#v}" tap/Formula/leakscan.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "leakscan ${GITHUB_REF_NAME#v}" && git push

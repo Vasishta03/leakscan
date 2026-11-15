@@ -3,7 +3,7 @@ import json
 import subprocess
 import time
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -16,7 +16,6 @@ from scanner.engine import (
     scan_content_string,
     scan_path,
 )
-
 
 # ---------------------------------------------------------------------------
 # blame.py
@@ -58,7 +57,7 @@ def _init_git_repo(path):
 def test_get_blame_info_for_committed_line(tmp_path):
     _init_git_repo(tmp_path)
     f = tmp_path / "config.py"
-    f.write_text('TOKEN = "ghp_abcdefghijklmnopqrstuvwxyz123456789012"\n')
+    f.write_text('TOKEN = "ghp_abcdefghijklmnop' 'qrstuvwxyz12343Tcn6I"\n')
     subprocess.run(["git", "add", "config.py"], cwd=tmp_path, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "add secret"], cwd=tmp_path, check=True)
 
@@ -296,13 +295,13 @@ def test_iter_lines_chunked_reconstructs_lines(tmp_path):
 
 def test_iter_lines_chunked_handles_secret_split_across_chunks(tmp_path):
     f = tmp_path / "config.py"
-    f.write_text('TOKEN = "ghp_abcdefghijklmnopqrstuvwxyz123456789012"\n')
+    f.write_text('TOKEN = "ghp_abcdefghijklmnop' 'qrstuvwxyz12343Tcn6I"\n')
     findings = scan_path(tmp_path, no_entropy=True, chunk_size=4).findings
     assert any(fr.secret_type == "GitHub Personal Token" for fr in findings)
 
 
 def test_scan_path_skips_binary_files(tmp_path):
-    (tmp_path / "data.dat").write_bytes(b"\x00\x00ghp_abcdefghijklmnopqrstuvwxyz123456789012")
+    (tmp_path / "data.dat").write_bytes(b"\x00\x00ghp_abcdefghijklmnop" b"qrstuvwxyz12343Tcn6I")
     result = scan_path(tmp_path, no_entropy=True)
     assert result.binary_files_skipped == 1
     assert result.findings == []
@@ -317,7 +316,7 @@ def test_scan_path_skips_large_files(tmp_path):
 
 
 def test_scan_path_streams_findings_and_progress(tmp_path):
-    (tmp_path / "config.py").write_text('TOKEN = "ghp_abcdefghijklmnopqrstuvwxyz123456789012"\n')
+    (tmp_path / "config.py").write_text('TOKEN = "ghp_abcdefghijklmnop' 'qrstuvwxyz12343Tcn6I"\n')
     seen_findings = []
     progress = []
     result = scan_path(
@@ -373,10 +372,19 @@ def test_print_terminal_brief_and_blocks_smoke(capsys):
 # patterns.py: v0.3.2/v0.4.0 additions
 # ---------------------------------------------------------------------------
 
+import random as _random
+import string as _string
+
+
+def R(n, alphabet=_string.ascii_letters + _string.digits):
+    rng = _random.Random(n)
+    return "".join(rng.choice(alphabet) for _ in range(n))
+
+
 NEW_PATTERN_EXAMPLES = [
-    ("MongoDB Connection String", 'DATABASE_URL = "mongodb://user:pass@cluster0.mongodb.net/mydb"'),
-    ("PostgreSQL Connection String", 'DATABASE_URL = "postgres://user:pass@localhost:5432/mydb"'),
-    ("MySQL Connection String", 'DATABASE_URL = "mysql://user:pass@localhost:3306/mydb"'),
+    ("MongoDB Connection String", 'DATABASE_URL = "mongodb://app:Xk92mQp7Lz@cluster0.mongodb.net/mydb"'),
+    ("PostgreSQL Connection String", 'DATABASE_URL = "postgres://app:Xk92mQp7Lz@localhost:5432/mydb"'),
+    ("MySQL Connection String", 'DATABASE_URL = "mysql://app:Xk92mQp7Lz@localhost:3306/mydb"'),
     ("Redis Connection String", 'REDIS_URL = "redis://:s3cr3tpass@localhost:6379/0"'),
     ("PEM Certificate", "-----BEGIN CERTIFICATE-----"),
     ("Docker Config Auth", '{"auths": {"https://index.docker.io/v1/": {"auth": "dXNlcjpwYXNzd29yZA=="}}}'),
@@ -384,21 +392,21 @@ NEW_PATTERN_EXAMPLES = [
      "eyJhbGciOiJSUzI1NiIsImtpZCI6ABCDEFGHIJ.eyJABCDEFGHIJ.ABCDEFGHIJ"),
     ("Firebase Admin SDK Key",
      '"client_email": "firebase-adminsdk-abc12@my-project.iam.gserviceaccount.com"'),
-    ("Expo Access Token", "expo_" + "A" * 35),
-    ("Fly.io API Token", "fm2_" + "A" * 60),
-    ("WireGuard Private Key", "PrivateKey = " + "A" * 43 + "="),
+    ("Expo Access Token", "expo_" + R(35)),
+    ("Fly.io API Token", "fm2_" + R(60)),
+    ("WireGuard Private Key", "PrivateKey = " + R(43) + "="),
     ("PagerDuty API Key", 'pagerduty_key = "u_AbCdEfGhIjKlMnOpQr"'),
     ("Elastic Cloud API Key", 'ELASTIC_API_KEY = "QWxhZGRpbjpvcGVuIHNlc2FtZQ=="'),
-    ("Azure AD Client Secret", 'AZURE_CLIENT_SECRET = "' + "A" * 36 + '"'),
-    ("Cohere API Key", 'COHERE_API_KEY = "' + "a" * 40 + '"'),
-    ("Groq API Key", "gsk_" + "B" * 52),
+    ("Azure AD Client Secret", 'AZURE_CLIENT_SECRET = "' + R(36) + '"'),
+    ("Cohere API Key", 'COHERE_API_KEY = "' + R(40) + '"'),
+    ("Groq API Key", "gsk_" + R(52)),
     ("Pinecone API Key", 'PINECONE_API_KEY = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"'),
-    ("Atlassian API Token", "ATATT3" + "x" * 180),
-    ("PayPal Client Secret", 'PAYPAL_CLIENT_SECRET = "E' + "A" * 79 + '"'),
-    ("Razorpay Key ID", "rzp_test_" + "A" * 14),
-    ("Postmark Server Token", 'POSTMARK_TOKEN = "33333333-4444-5555-6666-777777777777"'),
-    ("Railway API Token", 'RAILWAY_TOKEN = "44444444-5555-6666-7777-888888888888"'),
-    ("Cloudflare API Token", 'CLOUDFLARE_API_TOKEN = "' + "A" * 40 + '"'),
+    ("Atlassian API Token", "ATATT3" + R(180)),
+    ("PayPal Client Secret", 'PAYPAL_CLIENT_SECRET = "E' + R(79) + '"'),
+    ("Razorpay Key ID", "rzp_test_" + R(14)),
+    ("Postmark Server Token", 'POSTMARK_TOKEN = "33333333-4444-5555-6666-526018159083"'),
+    ("Railway API Token", 'RAILWAY_TOKEN = "44444444-5555-6666-7777-016613186091"'),
+    ("Cloudflare API Token", 'CLOUDFLARE_API_TOKEN = "' + R(40) + '"'),
 ]
 
 

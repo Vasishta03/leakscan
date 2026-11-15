@@ -1,0 +1,19 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.singleton.1.6.0.schema.json
+PackageIdentifier: Vasishta03.leakscan
+PackageVersion: 0.5.0
+PackageLocale: en-US
+Publisher: Vasishta Nandipati
+PackageName: leakscan
+License: MIT
+LicenseUrl: https://github.com/Vasishta03/leakscan/blob/main/LICENSE
+PackageUrl: https://github.com/Vasishta03/leakscan
+ShortDescription: Find leaked API keys and secrets in code, git history, images and packages.
+Tags: [security, secrets, cli, devsecops, git]
+Commands: [leakscan]
+Installers:
+  - Architecture: x64
+    InstallerType: portable
+    InstallerUrl: https://github.com/Vasishta03/leakscan/releases/download/v0.5.0/leakscan-windows-x86_64.exe
+    InstallerSha256: WINDOWS_EXE_SHA256
+ManifestType: singleton
+ManifestVersion: 1.6.0

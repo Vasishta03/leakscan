@@ -1,41 +1,41 @@
 from __future__ import annotations
 
-import os
 import re
 import sys
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 import click
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn
-from tqdm import tqdm
+from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
+from scanner import __version__, notify, reporter
+from scanner import blame as blameutil
+from scanner import purge as purge_module
+from scanner.config import load_config
 from scanner.engine import (
+    DEFAULT_CHUNK_SIZE,
     Finding,
+    ScanOptions,
     ScanResult,
-    scan_content_string,
+    scan_diff,
     scan_git_history,
-    scan_patch_string,
     scan_path,
     scan_staged,
 )
-from scanner.engine import DEFAULT_CHUNK_SIZE, DEFAULT_MAX_FILE_SIZE
-from scanner.github.fetcher import GitHubFetcher, RateLimitError
-from scanner.config import load_config
-from scanner import blame as blameutil
-from scanner import notify, reporter
-from scanner import purge as purge_module
 from scanner.ignorefile import append_ignore_pattern, write_init_template
 
 console = Console()
 err_console = Console(stderr=True)
 
-_GITHUB_URL_RE = re.compile(
-    r"^(?:https?://)?github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$"
-)
+EXIT_CLEAN, EXIT_FINDINGS, EXIT_ERROR = 0, 1, 2
+SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+SEVERITIES = list(SEVERITY_ORDER)
+FORMATS = ["terminal", "json", "csv", "sarif", "html", "junit", "markdown", "sonarqube", "defectdojo", "disclosure"]
+
+_GITHUB_URL_RE = re.compile(r"^(?:https?://)?github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$")
 
 
 def _parse_github_url(value: str) -> tuple[str, str] | None:
@@ -43,324 +43,295 @@ def _parse_github_url(value: str) -> tuple[str, str] | None:
     return (m.group(1), m.group(2)) if m else None
 
 
-_STREAM_STYLE = {
-    "CRITICAL": {"fg": "red", "bold": True},
-    "HIGH": {"fg": "red"},
-    "MEDIUM": {"fg": "yellow"},
-    "LOW": {"fg": "white", "dim": True},
-}
+class ScanError(click.ClickException):
+    exit_code = EXIT_ERROR
 
 
-def _stream_finding(f: Finding, bar: Optional[tqdm]) -> None:
-    style = _STREAM_STYLE.get(f.severity, {})
-    tag = click.style(f.severity, **style)
-    line = f"{tag}  {f.secret_type} - {f.file}:{f.line_number}"
-    if bar is not None:
-        bar.write(line)
-    else:
-        click.echo(line, err=True)
+_STREAM_STYLE = {"CRITICAL": "bold red", "HIGH": "red", "MEDIUM": "yellow", "LOW": "dim"}
 
 
-def _run_local_scan(
-    target: Path,
-    entropy_threshold: float,
-    no_entropy: bool,
-    threads: Optional[int],
-    max_file_size: int,
-    chunk_size: int,
-    no_progress: bool,
-    stream_live: bool,
-) -> ScanResult:
-    """Run a multi-threaded scan of a local path with a progress bar,
-    a live stream of findings, and a benchmark summary at the end."""
-    bar: Optional[tqdm] = None
-    if not no_progress:
-        bar = tqdm(
-            total=None,
-            unit="file",
-            desc=f"Scanning {target}",
-            file=sys.stderr,
-            dynamic_ncols=True,
-            leave=False,
-        )
+def _stream_line(f: Finding) -> str:
+    style = _STREAM_STYLE.get(f.severity, "")
+    return f"[{style}]{f.severity}[/{style}]  {f.rule_id}  {f.secret_type} - {f.file}:{f.line_number}"
 
-    def on_progress(done: int, total: int) -> None:
-        if bar is not None:
-            if bar.total != total:
-                bar.total = total
-                bar.refresh()
-            bar.update(1)
 
-    def on_finding(f: Finding) -> None:
-        if stream_live:
-            _stream_finding(f, bar)
+def _progress(enabled: bool) -> Progress:
+    return Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(),
+                    MofNCompleteColumn(), TimeElapsedColumn(), console=err_console, transient=True,
+                    disable=not enabled)
 
-    try:
-        result = scan_path(
-            target,
-            entropy_threshold,
-            no_entropy,
-            threads=threads,
-            max_file_size=max_file_size,
-            chunk_size=chunk_size,
-            on_finding=on_finding,
-            on_progress=on_progress,
-        )
-    finally:
-        if bar is not None:
-            bar.close()
 
-    err_console.print(
-        f"[dim]Scanned {result.files_scanned} file(s) in {result.elapsed_seconds:.2f}s "
-        f"({result.files_per_second:.1f} files/sec)[/dim]"
-    )
-    if result.large_files_skipped:
-        for skipped in result.large_files_skipped:
-            err_console.print(f"[yellow]Skipped (exceeds size limit):[/yellow] {skipped}")
+def _run_local_scan(target: Path, opts: ScanOptions, threads: Optional[int], max_file_size: int, chunk_size: int,
+                    no_progress: bool, stream_live: bool, cache_path: Optional[Path]) -> ScanResult:
+    with _progress(not no_progress) as progress:
+        task = progress.add_task(f"Scanning {target.name or target}", total=None)
+
+        def on_progress(done: int, total: int) -> None:
+            progress.update(task, completed=done, total=total)
+
+        def on_finding(f: Finding) -> None:
+            if stream_live:
+                progress.console.print(_stream_line(f))
+
+        result = scan_path(target, threads=threads, max_file_size=max_file_size, chunk_size=chunk_size,
+                           on_finding=on_finding, on_progress=on_progress, options=opts, cache_path=cache_path)
+
+    cached = f", {result.files_cached} unchanged from cache" if result.files_cached else ""
+    err_console.print(f"[dim]Scanned {result.files_scanned} file(s) in {result.elapsed_seconds:.2f}s "
+                      f"({result.files_per_second:.1f} files/sec{cached})[/dim]")
+    for skipped in result.large_files_skipped:
+        err_console.print(f"[yellow]Skipped (exceeds size limit):[/yellow] {skipped}")
     if result.binary_files_skipped:
         err_console.print(f"[dim]Skipped {result.binary_files_skipped} binary file(s)[/dim]")
-
     return result
 
 
 def _attach_blame(result: ScanResult, root: Path) -> None:
-    """Populate Finding.blame for findings in the working tree using `git blame`.
-
-    Skipped for findings that already carry a commit (history-scan results,
-    which point at the commit that introduced them rather than HEAD).
-    """
     if not root.is_dir() or not blameutil.is_git_repo(root):
         return
     for f in result.findings:
-        if f.commit:
+        if f.commit or "!" in f.file:
             continue
-        fp = Path(f.file)
-        try:
-            rel = str(fp.relative_to(root)) if fp.is_absolute() else f.file
-        except ValueError:
-            continue
-        f.blame = blameutil.get_blame_info(root, rel, f.line_number)
+        f.blame = blameutil.get_blame_info(root, f.file, f.line_number)
 
 
-@click.group()
+def _spinner(text: str, enabled: bool = True) -> Progress:
+    return Progress(SpinnerColumn(), TextColumn(text), console=err_console, transient=True, disable=not enabled)
+
+
+def _build_options(cfg, entropy_threshold: float, no_entropy: bool, disable_rule: tuple[str, ...], decode: bool,
+                   archives: bool, no_validate: bool, keep_placeholders: bool) -> ScanOptions:
+    if cfg.entropy_threshold is not None and entropy_threshold == 4.5:
+        entropy_threshold = cfg.entropy_threshold
+    if cfg.no_entropy and not no_entropy:
+        no_entropy = True
+    opts = ScanOptions(entropy_threshold=entropy_threshold, no_entropy=no_entropy, decode=decode, archives=archives,
+                       validate=not no_validate, placeholders=not keep_placeholders)
+    cfg.apply(opts)
+    opts.disable_rules |= {r.upper() if r.upper().startswith("LS-") else r for r in disable_rule}
+    return opts
+
+
+@click.group(context_settings={"help_option_names": ["-h", "--help"]})
+@click.version_option(__version__, "-V", "--version", prog_name="leakscan")
 def cli():
-    """Secret Scanner - detect leaked API keys and tokens in code."""
-    pass
+    """leakscan - find leaked API keys and secrets in code, history, images and packages."""
 
 
 @cli.command()
 @click.argument("path", default=".", required=False)
-@click.option("--github", "-g", default=None, metavar="USERNAME",
-              help="Scan all public repos for a GitHub user/org.")
-@click.option("--repo", "-r", default=None, metavar="REPO",
-              help="Limit GitHub scan to a specific repo name.")
-@click.option("--token", "-t", default=None, envvar="GITHUB_TOKEN",
-              metavar="TOKEN", help="GitHub personal access token (or set GITHUB_TOKEN).")
-@click.option("--format", "-f", "output_format",
-              type=click.Choice(["terminal", "json", "csv", "sarif", "disclosure"]),
-              default="terminal", show_default=True)
-@click.option("--output", "-o", default=None, metavar="FILE")
+@click.option("--text", default=None, metavar="STRING", help="Scan a literal string instead of a path.")
+@click.option("--github", "-g", default=None, metavar="USER", help="Scan every public repo of a GitHub user or org.")
+@click.option("--github-org", default=None, metavar="ORG", help="Scan every repo in a GitHub organisation.")
+@click.option("--repo", "-r", default=None, metavar="REPO", help="Limit --github to one repo name.")
+@click.option("--include-forks", is_flag=True, help="Org/user scans: include forks.")
+@click.option("--include-archived", is_flag=True, help="Org/user scans: include archived repos.")
+@click.option("--repo-include", multiple=True, metavar="GLOB", help="Org/user scans: only repos matching GLOB.")
+@click.option("--repo-exclude", multiple=True, metavar="GLOB", help="Org/user scans: skip repos matching GLOB.")
+@click.option("--resume", "resume_file", default=None, metavar="FILE",
+              help="Org/user scans: resume from (and save progress to) FILE.")
+@click.option("--token", "-t", default=None, envvar="GITHUB_TOKEN", metavar="TOKEN",
+              help="GitHub token for API calls and private clones (or GITHUB_TOKEN).")
+@click.option("--clone-depth", default=None, type=int, metavar="N", help="Depth for remote clones (default: 1, or --depth+1 with --history).")
+@click.option("--format", "-f", "output_format", type=click.Choice(FORMATS), default="terminal", show_default=True)
+@click.option("--output", "-o", default=None, metavar="FILE", help="Write the report to FILE.")
+@click.option("--also", "also", multiple=True, metavar="FORMAT:FILE",
+              help="Write an extra report in another format, e.g. --also sarif:out.sarif (repeatable).")
 @click.option("--entropy-threshold", default=4.5, show_default=True)
-@click.option("--no-entropy", is_flag=True, default=False)
-@click.option("--severity", "-s",
-              type=click.Choice(["CRITICAL", "HIGH", "MEDIUM", "LOW"]),
-              default=None)
-@click.option("--history", is_flag=True, default=False,
-              help="Also scan git history for secrets in past commits.")
-@click.option("--depth", default=None, type=int, metavar="N",
-              help="Commits to scan with --history (default: 100 local, 50 GitHub).")
-@click.option("--since", default=None, metavar="DATE",
-              help="Limit history scan to commits after DATE (e.g. 2024-01-01).")
-@click.option("--branch", default=None, metavar="BRANCH",
-              help="Limit history scan to a specific branch (local only).")
-@click.option("--verify", is_flag=True, default=False,
-              help="Verify whether found secrets are still live via API calls.")
-@click.option("--staged", is_flag=True, default=False,
-              help="Scan only git staged changes (for pre-commit use).")
-@click.option("--config", "config_path", default=None, metavar="FILE",
-              help="Path to .leakscan.yaml config file (auto-detected if omitted).")
-@click.option("--baseline", default=None, metavar="FILE",
-              help="Filter out findings already in this baseline file.")
-@click.option("--save-baseline", default=None, metavar="FILE",
-              help="Save current findings as a baseline for future runs.")
-@click.option("--redact", is_flag=True, default=False,
-              help="Redact secret values in all output (show first/last 4 chars only).")
-@click.option("--include-gists", is_flag=True, default=False,
-              help="Include GitHub Gists in --github scans.")
-@click.option("--threads", default=None, type=int, metavar="N",
-              help="Worker threads for scanning (default: CPU count).")
-@click.option("--max-file-size", default=50, type=int, metavar="MB", show_default=True,
-              help="Skip files larger than this size (in MB), with a warning.")
-@click.option("--chunk-size", default=DEFAULT_CHUNK_SIZE, type=int, metavar="BYTES", show_default=True,
-              help="Bytes read per chunk when scanning files (keeps memory flat on large repos).")
-@click.option("--no-progress", is_flag=True, default=False,
-              help="Disable the progress bar and live result stream.")
-@click.option("--brief", is_flag=True, default=False,
-              help="Compact one-line-per-finding output (default prints a full "
-                   "blast-radius block for each finding).")
-@click.option("--no-blame", is_flag=True, default=False,
-              help="Skip git blame lookups (faster on large repos, no commit/age info).")
-@click.option("--show-ignored", is_flag=True, default=False,
-              help="List files skipped because of .leakscanignore patterns.")
-@click.option("--notify", "notify_target", default=None,
-              type=click.Choice(["slack", "discord", "both"]),
-              help="Send a summary of results to Slack and/or Discord.")
-@click.option("--webhook", default=None, metavar="URL",
-              help="Webhook URL to use for --notify (overridden by --slack-webhook/--discord-webhook).")
-@click.option("--slack-webhook", default=None, metavar="URL",
-              help="Slack incoming webhook URL (overrides ~/.leakscanrc).")
-@click.option("--discord-webhook", default=None, metavar="URL",
-              help="Discord webhook URL (overrides ~/.leakscanrc).")
-@click.option("--notify-clean", is_flag=True, default=False,
-              help="Also send a notification when no secrets are found.")
-def scan(
-    path: str,
-    github: Optional[str],
-    repo: Optional[str],
-    token: Optional[str],
-    output_format: str,
-    output: Optional[str],
-    entropy_threshold: float,
-    no_entropy: bool,
-    severity: Optional[str],
-    history: bool,
-    depth: Optional[int],
-    since: Optional[str],
-    branch: Optional[str],
-    verify: bool,
-    staged: bool,
-    config_path: Optional[str],
-    baseline: Optional[str],
-    save_baseline: Optional[str],
-    redact: bool,
-    include_gists: bool,
-    threads: Optional[int],
-    max_file_size: int,
-    chunk_size: int,
-    no_progress: bool,
-    brief: bool,
-    no_blame: bool,
-    show_ignored: bool,
-    notify_target: Optional[str],
-    webhook: Optional[str],
-    slack_webhook: Optional[str],
-    discord_webhook: Optional[str],
-    notify_clean: bool,
-):
-    """Scan a local PATH, GitHub repo URL, or GitHub profile for leaked secrets.
+@click.option("--no-entropy", is_flag=True, help="Disable the high-entropy fallback detector.")
+@click.option("--severity", "-s", type=click.Choice(SEVERITIES, case_sensitive=False), default=None,
+              help="Only report findings at or above this severity.")
+@click.option("--min-confidence", default=0.0, type=float, metavar="0-1", help="Only report findings at or above this confidence.")
+@click.option("--fail-on", type=click.Choice(SEVERITIES, case_sensitive=False), default=None,
+              help="Exit 1 if any finding is at or above this severity (default HIGH).")
+@click.option("--exit-zero", is_flag=True, help="Always exit 0 when the scan itself succeeds.")
+@click.option("--history", is_flag=True, help="Also scan git history.")
+@click.option("--depth", "--max-commits", "depth", default=None, type=int, metavar="N",
+              help="Max commits to scan with --history (default 100, GitHub 50).")
+@click.option("--since", default=None, metavar="DATE", help="History: only commits after DATE.")
+@click.option("--branch", default=None, metavar="BRANCH", help="History: only this branch.")
+@click.option("--staged", is_flag=True, help="Scan only staged changes (pre-commit).")
+@click.option("--since-commit", default=None, metavar="REF", help="Scan only lines added since REF.")
+@click.option("--base", default=None, metavar="BRANCH", help="Scan only lines added relative to BRANCH (merge-base).")
+@click.option("--pr", is_flag=True, help="Scan only lines added in the current PR/MR (CI env vars).")
+@click.option("--follow", is_flag=True, help="Tail PATH (or stdin) and report secrets as lines arrive.")
+@click.option("--archives", is_flag=True, help="Scan inside .zip/.tar/.whl/.jar archives.")
+@click.option("--decode", is_flag=True, help="Also decode base64/hex/URL-encoded values one level.")
+@click.option("--no-validate", is_flag=True, help="Keep matches that fail checksum/structure validation.")
+@click.option("--keep-placeholders", is_flag=True, help="Report EXAMPLE/changeme/xxxx placeholder values too.")
+@click.option("--disable-rule", multiple=True, metavar="ID", help="Disable a rule by ID (repeatable).")
+@click.option("--verify", is_flag=True, help="Check whether found secrets are live (sends them to their provider).")
+@click.option("--verify-only", default=None, metavar="SERVICES", help="Comma list of services to verify (see `leakscan rules verifiers`).")
+@click.option("--verify-timeout", default=5.0, type=float, show_default=True, metavar="SECONDS")
+@click.option("--verify-concurrency", default=4, type=click.IntRange(1, 10), show_default=True)
+@click.option("--yes", "-y", "assume_yes", is_flag=True, help="Confirm --verify against third-party targets.")
+@click.option("--config", "config_path", default=None, metavar="FILE", help="Config file (default: auto-detect .leakscan.yaml).")
+@click.option("--baseline", default=None, metavar="FILE", help="Hide findings already in this baseline.")
+@click.option("--save-baseline", default=None, metavar="FILE", help="Save findings as a baseline (fingerprints only).")
+@click.option("--redact", is_flag=True, help="Mask secret values in output.")
+@click.option("--include-gists", is_flag=True, help="Include gists in --github scans.")
+@click.option("--threads", default=None, type=int, metavar="N", help="Worker threads (default: CPU count).")
+@click.option("--max-file-size", default=50, type=int, metavar="MB", show_default=True)
+@click.option("--chunk-size", default=DEFAULT_CHUNK_SIZE, type=int, metavar="BYTES", show_default=True)
+@click.option("--cache", "cache_file", is_flag=False, flag_value=".leakscan-cache", default=None, metavar="FILE",
+              help="Skip unchanged clean files using a cache (default file .leakscan-cache).")
+@click.option("--no-progress", is_flag=True, help="No progress bar or live stream.")
+@click.option("--brief", is_flag=True, help="One line per finding instead of full blocks.")
+@click.option("--no-blame", is_flag=True, help="Skip git blame lookups.")
+@click.option("--show-ignored", is_flag=True, help="List files skipped by .leakscanignore.")
+@click.option("--notify", "notify_target", default=None, metavar="TARGETS",
+              help="Comma list: slack, discord, teams, webhook, email (or 'both' for slack+discord).")
+@click.option("--webhook", default=None, metavar="URL", help="Generic JSON webhook URL (also used as the fallback for --notify).")
+@click.option("--slack-webhook", default=None, metavar="URL")
+@click.option("--discord-webhook", default=None, metavar="URL")
+@click.option("--teams-webhook", default=None, metavar="URL")
+@click.option("--notify-clean", is_flag=True, help="Also notify when nothing is found.")
+def scan(path, text, github, github_org, repo, include_forks, include_archived, repo_include, repo_exclude,
+         resume_file, token, clone_depth, output_format, output, also, entropy_threshold, no_entropy, severity,
+         min_confidence, fail_on, exit_zero, history, depth, since, branch, staged, since_commit, base, pr, follow,
+         archives, decode, no_validate, keep_placeholders, disable_rule, verify, verify_only, verify_timeout,
+         verify_concurrency, assume_yes, config_path, baseline, save_baseline, redact, include_gists, threads,
+         max_file_size, chunk_size, cache_file, no_progress, brief, no_blame, show_ignored, notify_target, webhook,
+         slack_webhook, discord_webhook, teams_webhook, notify_clean):
+    """Scan PATH for leaked secrets.
+
+    PATH can be a directory, a file, '-' for stdin, a git URL (GitHub, GitLab,
+    Bitbucket or any https/ssh remote), docker://IMAGE[:TAG], pypi:NAME[==VER]
+    or npm:NAME[@VER].
 
     \b
     Examples:
-      leakscan scan ./myproject
+      leakscan scan .
       leakscan scan . --staged
+      leakscan scan . --pr --format sarif -o results.sarif
       leakscan scan . --history --since 2024-01-01
-      leakscan scan https://github.com/owner/repo --verify
-      leakscan scan --github username --include-gists
-      leakscan scan . --baseline .secrets.baseline
-      leakscan scan . --config custom-rules.yaml
-      leakscan scan . --threads 16 --max-file-size 100
-      leakscan scan . --brief --no-blame
-      leakscan scan . --notify slack --slack-webhook https://hooks.slack.com/...
+      cat .env | leakscan scan -
+      leakscan scan --text "AKIA..."
+      leakscan scan notebooks/ --archives
+      leakscan scan docker://nginx:1.27
+      leakscan scan pypi:requests==2.32.3
+      leakscan scan https://gitlab.com/group/project --history
+      leakscan scan --github-org my-org --resume org.state.json
     """
-    gh_owner: Optional[str] = None
-    gh_repo_filter: Optional[str] = None
+    from scanner import sources
 
-    # Load config from file or auto-detect
-    target = Path(path).resolve()
-    if config_path:
-        cfg = load_config(Path(config_path).parent)
-    else:
-        cfg = load_config(target if target.is_dir() else target.parent)
-
-    # Apply config overrides (CLI flags take precedence)
-    if cfg.entropy_threshold is not None and entropy_threshold == 4.5:
-        entropy_threshold = cfg.entropy_threshold
-    if cfg.no_entropy is not None and not no_entropy:
-        no_entropy = cfg.no_entropy
+    severity = severity.upper() if severity else None
+    target = Path(path)
+    local = not (text or github or github_org or path == "-" or sources.is_remote_url(path)
+                 or sources.is_docker(path) or sources.is_package(path))
+    cfg_dir = target.resolve() if local and target.is_dir() else (target.resolve().parent if local else Path.cwd())
+    cfg = load_config(cfg_dir, Path(config_path) if config_path else None)
+    for problem in cfg.errors:
+        err_console.print(f"[yellow]config:[/yellow] {problem}")
     if cfg.severity_threshold and not severity:
         severity = cfg.severity_threshold
+    fail_on = (fail_on or cfg.fail_on or "HIGH").upper()
+    opts = _build_options(cfg, entropy_threshold, no_entropy, disable_rule, decode or bool(cfg.decode),
+                          archives or bool(cfg.archives), no_validate, keep_placeholders)
 
-    # Register custom patterns from config
-    if cfg.custom_patterns:
-        from scanner.patterns import PATTERNS
-        PATTERNS.extend(cfg.custom_patterns)
-
-    if github:
-        gh_owner = github
-        gh_repo_filter = repo
-    else:
-        url_match = _parse_github_url(path)
-        if url_match:
-            gh_owner, gh_repo_filter = url_match
-
-    if gh_owner:
-        result = _scan_github(
-            username=gh_owner,
-            repo_filter=gh_repo_filter,
-            token=token,
-            entropy_threshold=entropy_threshold,
-            no_entropy=no_entropy,
-            history=history,
-            depth=depth or 50,
-            include_gists=include_gists,
-        )
-    elif staged:
-        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
-                      console=err_console, transient=True) as progress:
-            progress.add_task("Scanning staged changes...", total=None)
-            result = scan_staged(target, entropy_threshold, no_entropy)
-    else:
-        target = Path(path).resolve()
-        if not target.exists():
-            err_console.print(f"[red]Path not found:[/red] {target}")
-            sys.exit(1)
-
-        result = _run_local_scan(
-            target,
-            entropy_threshold,
-            no_entropy,
-            threads=threads,
-            max_file_size=max_file_size * 1_000_000,
-            chunk_size=chunk_size,
-            no_progress=no_progress,
-            stream_live=(output_format == "terminal"),
+    third_party = not local and not text and path != "-"
+    if verify and third_party and not assume_yes:
+        raise ScanError(
+            "--verify sends every detected secret to its provider's API. For repos, profiles, images or packages "
+            "you don't own, that may be unauthorised use of someone else's credentials. Re-run with --yes if you "
+            "have permission, or drop --verify."
         )
 
-        if history:
-            with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
-                          console=err_console, transient=True) as progress:
-                progress.add_task("Scanning git history...", total=None)
-                hist = scan_git_history(
-                    target, entropy_threshold, no_entropy,
-                    depth=depth or 100, since=since, branch=branch,
-                )
-            result.findings.extend(hist.findings)
-            result.commits_scanned = hist.commits_scanned
-            result.errors.extend(hist.errors)
+    label = path
+    stream = output_format == "terminal" and not no_progress
+    try:
+        if text is not None:
+            result = sources.scan_text(text, opts, "<text>")
+            label = "<text>"
+        elif follow:
+            def _emit(f: Finding) -> None:
+                err_console.print(_stream_line(f))
+            try:
+                result = sources.follow(target if path != "-" else Path("-"), opts, _emit)
+            except KeyboardInterrupt:
+                result = ScanResult()
+        elif path == "-":
+            result = sources.scan_text(sys.stdin.read(), opts, "<stdin>")
+            label = "<stdin>"
+        elif github_org or github:
+            owner = github_org or github
+            settings = sources.OrgScanSettings(
+                include_forks=include_forks, include_archived=include_archived,
+                include=tuple(repo_include) + ((repo,) if repo else ()), exclude=tuple(repo_exclude),
+                resume_file=Path(resume_file) if resume_file else None, history=history, depth=depth or 50)
+            with _spinner(f"Listing repos for {owner}...", not no_progress) as prog:
+                t = prog.add_task("", total=None)
+                result = sources.scan_github_org(
+                    owner, opts, token, settings,
+                    on_repo=lambda name, i, n: prog.update(t, description=f"[{i}/{n}] {name}"))
+            if include_gists and github:
+                result.merge(_scan_gists(github, token, opts))
+            label = owner
+        elif sources.is_docker(path):
+            with _spinner(f"Scanning image {path}...", not no_progress):
+                result = sources.scan_docker_image(path, opts)
+        elif sources.is_package(path):
+            with _spinner(f"Downloading and scanning {path}...", not no_progress):
+                result = sources.scan_package(path, opts)
+        elif sources.is_remote_url(path):
+            with _spinner(f"Cloning {path}...", not no_progress):
+                result = sources.scan_remote(path, opts, history=history, depth=depth or 100, clone_depth=clone_depth,
+                                             branch=branch, token=token, threads=threads)
+        elif staged or since_commit or base or pr:
+            if since_commit:
+                args, src = [since_commit, "HEAD"], "diff"
+            elif base:
+                args, src = [f"{base}...HEAD"], "diff"
+            elif pr:
+                args, src = sources.pr_diff_args(), "pr"
+            else:
+                args, src = ["--cached"], "staged"
+            with _spinner("Scanning changes...", not no_progress):
+                result = scan_diff(target.resolve(), args, src, opts) if src != "staged" else \
+                    scan_staged(target.resolve(), options=opts)
+        else:
+            if not target.exists():
+                raise ScanError(f"Path not found: {target}")
+            cache_path = Path(cache_file) if cache_file else None
+            if cache_path and not cache_path.is_absolute() and target.is_dir():
+                cache_path = target / cache_path
+            result = _run_local_scan(target.resolve(), opts, threads, max_file_size * 1_000_000, chunk_size,
+                                     no_progress, stream, cache_path)
+            if history:
+                with _progress(not no_progress) as prog:
+                    t = prog.add_task("Scanning git history", total=depth or 100)
+                    hist = scan_git_history(target.resolve(), depth=depth or 100, since=since, branch=branch,
+                                            options=opts, on_commit=lambda n: prog.update(t, completed=n))
+                result.findings.extend(hist.findings)
+                result.commits_scanned = hist.commits_scanned
+                result.errors.extend(hist.errors)
+    except ScanError:
+        raise
+    except Exception as e:
+        raise ScanError(str(e)) from e
 
     if baseline:
         bpath = Path(baseline)
         if bpath.exists():
-            from scanner.baseline import load, filter_new
-            known = load(bpath)
+            from scanner.baseline import filter_new, load
             before = len(result.findings)
-            result.findings = filter_new(result.findings, known)
-            suppressed = before - len(result.findings)
-            if suppressed:
-                err_console.print(f"[dim]Suppressed {suppressed} baseline finding(s).[/dim]")
+            result.findings = filter_new(result.findings, load(bpath))
+            if before - len(result.findings):
+                err_console.print(f"[dim]Suppressed {before - len(result.findings)} baseline finding(s).[/dim]")
         else:
             err_console.print(f"[yellow]Baseline file not found:[/yellow] {bpath}")
 
     if severity:
-        order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
-        threshold = order[severity]
-        result.findings = [f for f in result.findings if order.get(f.severity, 9) <= threshold]
+        limit = SEVERITY_ORDER[severity]
+        result.findings = [f for f in result.findings if SEVERITY_ORDER.get(f.severity, 9) <= limit]
+    if min_confidence:
+        result.findings = [f for f in result.findings if f.confidence >= min_confidence]
 
     if verify and result.findings:
-        _verify_findings(result)
+        _verify_findings(result, verify_only, verify_timeout, verify_concurrency, not no_progress)
 
-    if not gh_owner and not no_blame and not brief and result.findings:
-        _attach_blame(result, target)
+    if local and not no_blame and not brief and result.findings and target.is_dir():
+        _attach_blame(result, target.resolve())
 
     if save_baseline:
         from scanner.baseline import save
@@ -369,148 +340,98 @@ def scan(
 
     if show_ignored and result.ignored_files:
         err_console.print(f"\n[dim]Ignored {len(result.ignored_files)} file(s) (.leakscanignore):[/dim]")
-        for ignored_path in result.ignored_files:
-            err_console.print(f"[dim]  {ignored_path}[/dim]")
+        for p in result.ignored_files:
+            err_console.print(f"[dim]  {p}[/dim]")
 
-    if output_format == "terminal":
-        reporter.print_terminal(result, redact=redact, brief=brief)
-    elif output_format == "json":
-        _write(reporter.to_json(result, redact=redact), output)
-    elif output_format == "csv":
-        _write(reporter.to_csv(result, redact=redact), output)
-    elif output_format == "sarif":
-        _write(reporter.to_sarif(result), output)
-    elif output_format == "disclosure":
-        target_name = gh_owner or github
-        if not target_name:
-            err_console.print("[red]--format disclosure requires --github <username> or a GitHub URL[/red]")
-            sys.exit(1)
-        _write(reporter.to_disclosure_report(target_name, result, redact=redact), output)
+    disclosure_target = github or github_org or _github_owner(path)
+    _emit_report(result, output_format, output, redact, brief, disclosure_target)
+    for spec in also:
+        fmt, sep, dest = spec.partition(":")
+        if not sep or fmt not in FORMATS or fmt == "terminal" or not dest:
+            raise ScanError(f"--also expects FORMAT:FILE with a non-terminal format, got {spec!r}")
+        _emit_report(result, fmt, dest, redact, brief, disclosure_target)
 
-    if result.findings:
+    if result.findings and output_format == "terminal":
         err_console.print(f"\n[dim]{purge_module.PURGE_REMINDER}[/dim]")
 
     if notify_target:
-        target_label = gh_owner or str(target)
         for message in notify.send_notifications(
-            result,
-            target_label,
-            notify_target,
-            slack_webhook=slack_webhook or webhook,
-            discord_webhook=discord_webhook or webhook,
-            notify_clean=notify_clean,
+            result, label if not local else str(target.resolve()), notify_target,
+            slack_webhook=slack_webhook or webhook, discord_webhook=discord_webhook or webhook,
+            notify_clean=notify_clean, teams_webhook=teams_webhook or webhook, generic_webhook=webhook,
         ):
             err_console.print(f"[dim]{message}[/dim]")
 
-    _exit_code(result)
+    sys.exit(_exit_code(result, fail_on, exit_zero))
 
 
-def _verify_findings(result: ScanResult) -> None:
-    from scanner.verifier import verify, can_verify
-    verifiable = [f for f in result.findings if can_verify(f)]
-    if not verifiable:
+def _github_owner(path: str) -> Optional[str]:
+    m = _parse_github_url(path)
+    return m[0] if m else None
+
+
+def _emit_report(result: ScanResult, fmt: str, output: Optional[str], redact: bool, brief: bool,
+                 disclosure_target: Optional[str]) -> None:
+    from scanner import formats
+
+    if fmt == "terminal":
+        reporter.print_terminal(result, redact=redact, brief=brief)
         return
-    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
-                  console=err_console, transient=True) as progress:
-        task = progress.add_task(f"Verifying {len(verifiable)} secret(s)...", total=len(verifiable))
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = {executor.submit(verify, f): f for f in verifiable}
+    if fmt == "disclosure":
+        if not disclosure_target:
+            raise ScanError("--format disclosure requires --github <user> or a GitHub URL")
+        content = reporter.to_disclosure_report(disclosure_target, result, redact=redact)
+    else:
+        render = {
+            "json": lambda: reporter.to_json(result, redact=redact),
+            "csv": lambda: reporter.to_csv(result, redact=redact),
+            "sarif": lambda: reporter.to_sarif(result, redact=True),
+            "html": lambda: formats.to_html(result, redact=True),
+            "junit": lambda: formats.to_junit(result),
+            "markdown": lambda: formats.to_markdown(result),
+            "sonarqube": lambda: formats.to_sonarqube(result),
+            "defectdojo": lambda: formats.to_defectdojo(result),
+        }
+        content = render[fmt]()
+    _write(content, output)
+
+
+def _verify_findings(result: ScanResult, only: Optional[str], timeout: float, concurrency: int,
+                     show_progress: bool) -> None:
+    from scanner import verifier
+
+    verifier.configure(timeout=timeout)
+    wanted = {s.strip().lower() for s in only.split(",")} if only else None
+    targets = [f for f in result.findings if verifier.can_verify(f)
+               and (wanted is None or (verifier.service_of(f.secret_type) or "") in wanted
+                    or f.rule_id.lower() in wanted)]
+    if not targets:
+        return
+    with _spinner(f"Verifying {len(targets)} secret(s)...", show_progress):
+        with ThreadPoolExecutor(max_workers=concurrency) as executor:
+            futures = {executor.submit(verifier.verify, f): f for f in targets}
             for future in as_completed(futures):
                 f = futures[future]
+                f.verified_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
                 try:
                     f.verified = future.result()
-                except Exception:
-                    pass
-                progress.advance(task)
+                except Exception as e:
+                    f.verification_error = e.__class__.__name__
 
 
-def _scan_github(
-    username: str,
-    repo_filter: Optional[str],
-    token: Optional[str],
-    entropy_threshold: float,
-    no_entropy: bool,
-    history: bool = False,
-    depth: int = 50,
-    include_gists: bool = False,
-) -> ScanResult:
+def _scan_gists(username: str, token: Optional[str], opts: ScanOptions) -> ScanResult:
+    from scanner.engine import scan_content_string
+    from scanner.github.fetcher import GitHubFetcher
+
     fetcher = GitHubFetcher(token=token)
     result = ScanResult()
-
-    if history and not token:
-        err_console.print("[yellow]Warning: --history without --token hits GitHub rate limits fast.[/yellow]")
-
-    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
-                  console=err_console, transient=True) as progress:
-        task = progress.add_task(f"Fetching repos for {username}...", total=None)
-
-        try:
-            repos = [f"{username}/{repo_filter}"] if repo_filter else fetcher.list_repos(username)
-        except RateLimitError as e:
-            err_console.print(f"[red]Rate limited.[/red] Retry in {e.wait_seconds}s")
-            sys.exit(1)
-        except Exception as e:
-            err_console.print(f"[red]GitHub API error:[/red] {e}")
-            sys.exit(1)
-
-        progress.update(task, description=f"Scanning {len(repos)} repos...")
-
-        for repo_name in repos:
-            progress.update(task, description=f"Scanning {repo_name}...")
-            try:
-                for repo_file in fetcher.iter_repo_files(repo_name):
-                    result.findings.extend(scan_content_string(
-                        content=repo_file.content,
-                        filepath=f"{repo_file.repo}/{repo_file.path}",
-                        entropy_threshold=entropy_threshold,
-                        no_entropy=no_entropy,
-                    ))
-                    result.files_scanned += 1
-            except RateLimitError as e:
-                err_console.print(f"\n[yellow]Rate limited. Waiting {e.wait_seconds}s...[/yellow]")
-                time.sleep(e.wait_seconds + 2)
-            except Exception as e:
-                result.errors.append(f"{repo_name}: {e}")
-                result.files_skipped += 1
-
-            if history:
-                seen: set[tuple] = set()
-                progress.update(task, description=f"Scanning {repo_name} history...")
-                try:
-                    for sha, filepath, patch in fetcher.iter_commit_diffs(repo_name, depth):
-                        for f in scan_patch_string(patch, filepath, sha, entropy_threshold, no_entropy):
-                            key = (f.matched_value, f.secret_type)
-                            if key not in seen:
-                                seen.add(key)
-                                result.findings.append(f)
-                except RateLimitError as e:
-                    err_console.print(f"\n[yellow]Rate limited on history. Waiting {e.wait_seconds}s...[/yellow]")
-                    time.sleep(e.wait_seconds + 2)
-                except Exception as e:
-                    result.errors.append(f"{repo_name} history: {e}")
-
-        if include_gists:
-            progress.update(task, description=f"Scanning gists for {username}...")
-            try:
-                gists = fetcher.list_gists(username)
-                for gist_id in gists:
-                    progress.update(task, description=f"Scanning gist:{gist_id[:8]}...")
-                    try:
-                        for gist_file in fetcher.iter_gist_files(gist_id):
-                            result.findings.extend(scan_content_string(
-                                content=gist_file.content,
-                                filepath=f"{gist_file.repo}/{gist_file.path}",
-                                entropy_threshold=entropy_threshold,
-                                no_entropy=no_entropy,
-                            ))
-                            result.files_scanned += 1
-                    except Exception as e:
-                        result.errors.append(f"gist:{gist_id}: {e}")
-            except RateLimitError as e:
-                err_console.print(f"\n[yellow]Rate limited on gists. Waiting {e.wait_seconds}s...[/yellow]")
-            except Exception as e:
-                result.errors.append(f"gists: {e}")
-
+    try:
+        for gist_id in fetcher.list_gists(username):
+            for gf in fetcher.iter_gist_files(gist_id):
+                result.findings.extend(scan_content_string(gf.content, f"{gf.repo}/{gf.path}", options=opts))
+                result.files_scanned += 1
+    except Exception as e:
+        result.errors.append(f"gists: {e}")
     return result
 
 
@@ -522,60 +443,62 @@ def _write(content: str, filepath: Optional[str]) -> None:
         click.echo(content)
 
 
-def _exit_code(result: ScanResult) -> None:
-    has_critical = any(f.severity in ("CRITICAL", "HIGH") for f in result.findings)
-    sys.exit(1 if has_critical else 0)
+def _exit_code(result: ScanResult, fail_on: str = "HIGH", exit_zero: bool = False) -> int:
+    if result.errors and not result.files_scanned and not result.commits_scanned and not result.findings:
+        for e in result.errors[:5]:
+            err_console.print(f"[red]error:[/red] {e}")
+        return EXIT_ERROR
+    if exit_zero:
+        return EXIT_CLEAN
+    limit = SEVERITY_ORDER[fail_on]
+    return EXIT_FINDINGS if any(SEVERITY_ORDER.get(f.severity, 9) <= limit for f in result.findings) else EXIT_CLEAN
 
 
-@cli.command(name="install-hook")
-def install_hook():
-    """Install a pre-commit git hook in the current repo."""
-    hook_path = Path(".git/hooks/pre-commit")
-    if not Path(".git").exists():
-        err_console.print("[red]Not a git repository.[/red]")
-        sys.exit(1)
-
-    hook_path.write_text("""#!/bin/sh
+HOOK_SCRIPT = """#!/bin/sh
+# Installed by `leakscan install-hook`
 BASELINE_ARG=""
 if [ -f .secrets.baseline ]; then
   BASELINE_ARG="--baseline .secrets.baseline"
 fi
-leakscan scan . --staged --severity HIGH --format terminal --brief --no-blame $BASELINE_ARG
-if [ $? -ne 0 ]; then
+leakscan scan . --staged --fail-on HIGH --format terminal --brief --no-blame --no-progress $BASELINE_ARG
+status=$?
+if [ $status -eq 1 ]; then
   echo ""
   echo "Commit blocked: secrets detected."
-  echo "Run 'leakscan scan .' for full details."
-  echo "To suppress a known false positive, add '# nosec' to the line."
+  echo "Fix it, or mark a false positive with '# leakscan:ignore <RULE-ID>' on the line."
   exit 1
 fi
-""")
+exit $status
+"""
+
+
+@cli.command(name="install-hook")
+def install_hook():
+    """Install a git pre-commit hook in the current repo."""
+    git_dir = Path(".git")
+    if not git_dir.exists():
+        raise ScanError("Not a git repository.")
+    hook_path = git_dir / "hooks" / "pre-commit"
+    hook_path.parent.mkdir(parents=True, exist_ok=True)
+    hook_path.write_text(HOOK_SCRIPT, encoding="utf-8")
     hook_path.chmod(0o755)
-    console.print("[green]Pre-commit hook installed at .git/hooks/pre-commit[/green]")
+    console.print(f"[green]Pre-commit hook installed at {hook_path}[/green]")
 
 
 @cli.command(name="ignore")
 @click.argument("pattern")
 @click.argument("path", default=".", required=False)
 def ignore_cmd(pattern: str, path: str):
-    """Add PATTERN to .leakscanignore (gitignore-style syntax).
-
-    \b
-    Examples:
-      leakscan ignore "tests/"
-      leakscan ignore "*.test.js"
-      leakscan ignore "!important.env"
-    """
-    root = Path(path).resolve()
-    ignore_file = append_ignore_pattern(root, pattern)
+    """Add PATTERN to .leakscanignore (gitignore syntax)."""
+    ignore_file = append_ignore_pattern(Path(path).resolve(), pattern)
     console.print(f"[green]Added[/green] '{pattern}' to {ignore_file}")
 
 
 @cli.command(name="init")
 @click.argument("path", default=".", required=False)
 def init_cmd(path: str):
-    """Create a .leakscanignore file with sensible defaults in PATH."""
-    root = Path(path).resolve()
-    ignore_file, created = write_init_template(root)
+    """Create a .leakscanignore with sensible defaults."""
+    ignore_file, created = write_init_template(Path(path).resolve())
     if created:
         console.print(f"[green]Created[/green] {ignore_file}")
     else:
@@ -583,25 +506,18 @@ def init_cmd(path: str):
 
 
 @cli.command()
-@click.option("--commit", default=None, metavar="SHA",
-              help="Show what a commit changed and how to redact its secrets from history.")
-@click.option("--file", "file_", default=None, metavar="PATH",
-              help="Remove a file from every commit in history.")
-@click.option("--all", "purge_all", is_flag=True, default=False,
-              help="Generate a template for redacting secret values everywhere they appear.")
-@click.option("--method", default=None, type=click.Choice(["filter-repo", "bfg"]),
-              help="Show commands for only one tool (default: both).")
-def purge(commit: Optional[str], file_: Optional[str], purge_all: bool, method: Optional[str]):
-    """Generate (but do not run) commands to remove secrets from git history.
-
-    \b
-    Examples:
-      leakscan purge --file config/secrets.yaml
-      leakscan purge --commit a1b2c3d4
-      leakscan purge --all --method filter-repo
-    """
+@click.option("--commit", default=None, metavar="SHA", help="Show what a commit changed and how to redact it.")
+@click.option("--file", "file_", default=None, metavar="PATH", help="Remove a file from every commit.")
+@click.option("--all", "purge_all", is_flag=True, help="Template for redacting secret values everywhere.")
+@click.option("--method", default=None, type=click.Choice(["filter-repo", "bfg"]))
+def purge(commit, file_, purge_all, method):
+    """Print (never run) commands to remove secrets from git history."""
     click.echo(purge_module.build_purge_report(commit=commit, file=file_, purge_all=purge_all, method=method))
 
+
+from scanner.commands import register  # noqa: E402
+
+register(cli)
 
 if __name__ == "__main__":
     cli()

@@ -3,14 +3,15 @@ from __future__ import annotations
 import csv
 import io
 import json
-from typing import Optional
+from typing import Any, Optional
 
+from rich import box
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich import box
 from rich.text import Text
 
+from scanner import __version__
 from scanner.blame import scraping_risk, scraping_warning
 from scanner.engine import Finding, ScanResult
 from scanner.remediation import get_remediation
@@ -39,6 +40,10 @@ RISK_COLORS = {
     "HIGH":     "red",
     "CRITICAL": "bold red",
 }
+
+SCHEMA_VERSION = "1.0"
+REPO_URL = "https://github.com/Vasishta03/leakscan"
+DOCS_URL = "https://vasishta03.github.io/leakscan"
 
 VERIFIED_STYLE = {
     "LIVE":    ("[bold green]LIVE[/bold green]",    "bold green"),
@@ -96,6 +101,7 @@ def _print_table(findings: list[Finding], redact: bool) -> None:
 
     table = Table(box=box.SIMPLE_HEAD, show_header=True, header_style="bold white", expand=True)
     table.add_column("Severity", style="bold", width=10)
+    table.add_column("Rule", style="dim cyan", no_wrap=True)
     table.add_column("Type", style="cyan", no_wrap=False)
     table.add_column("File", style="blue", no_wrap=False)
     table.add_column("Line", style="white", width=6)
@@ -109,8 +115,9 @@ def _print_table(findings: list[Finding], redact: bool) -> None:
         color = SEVERITY_COLORS.get(f.severity, "white")
         entropy_tag = f" (H={f.entropy})" if f.entropy else ""
         display_val = _display(f.matched_value, redact)
-        row = [
+        row: list[Any] = [
             Text(f.severity, style=color),
+            f.rule_id,
             f.secret_type + entropy_tag,
             f.file,
             str(f.line_number),
@@ -119,13 +126,9 @@ def _print_table(findings: list[Finding], redact: bool) -> None:
         if has_commits:
             row.append(f.commit or "")
         if has_verified:
-            v = f.verified
-            if v == "LIVE":
-                row.append(Text("LIVE", style="bold green"))
-            elif v == "REVOKED":
-                row.append(Text("REVOKED", style="dim green"))
-            else:
-                row.append(Text("?", style="dim"))
+            status = f.verification_status or ""
+            row.append(Text(status or "?", style={"active": "bold green", "inactive": "dim green",
+                                                  "error": "red"}.get(status, "dim")))
         table.add_row(*row)
 
     console.print(table)
@@ -139,15 +142,22 @@ def _print_blocks(findings: list[Finding], redact: bool) -> None:
         entropy_tag = f" (entropy {f.entropy})" if f.entropy else ""
         display_val = _display(f.matched_value, redact)
 
-        console.print(f"[{color}]\\[{f.severity}][/{color}] [bold]{f.secret_type}[/bold]{entropy_tag}")
-        console.print(f"  File: {f.file}:{f.line_number}")
+        console.print(f"[{color}]\\[{f.severity}][/{color}] [bold]{f.secret_type}[/bold]{entropy_tag} "
+                      f"[dim]{f.rule_id}  confidence {f.confidence:.2f}[/dim]")
+        console.print(f"  File: {_location(f)}")
         console.print(f"  Match: {display_val}")
         if f.commit:
             console.print(f"  Commit: {f.commit}")
-        if f.verified == "LIVE":
-            console.print("  Status: [bold green]LIVE[/bold green] (confirmed active via API)")
-        elif f.verified == "REVOKED":
-            console.print("  Status: [dim green]REVOKED[/dim green] (no longer active)")
+        if f.verification_status == "active":
+            console.print(f"  Status: [bold green]ACTIVE[/bold green] (confirmed via API at {f.verified_at})")
+        elif f.verification_status == "inactive":
+            console.print(f"  Status: [dim green]INACTIVE[/dim green] (rejected by the provider at {f.verified_at})")
+        elif f.verification_status == "unknown":
+            console.print("  Status: [dim]UNKNOWN[/dim] (provider gave no definite answer)")
+        elif f.verification_status == "error":
+            console.print(f"  Status: [red]ERROR[/red] ({f.verification_error})")
+        if f.extra.get("jwt_expired"):
+            console.print("  Note: JWT is expired")
 
         rem = get_remediation(f.secret_type)
         console.print(f"  If leaked: {rem.consequence}")
@@ -189,8 +199,8 @@ def _print_summary(result: ScanResult) -> None:
     if result.commits_scanned:
         scanned += f" + {result.commits_scanned} commits"
 
-    live = sum(1 for f in result.findings if f.verified == "LIVE")
-    live_str = f"  [bold green]{live} LIVE[/bold green]" if live else ""
+    live = sum(1 for f in result.findings if f.verification_status == "active")
+    live_str = f"  [bold green]{live} ACTIVE[/bold green]" if live else ""
 
     console.print(
         f"\n[bold]Scanned:[/bold] {scanned}  "
@@ -201,38 +211,63 @@ def _print_summary(result: ScanResult) -> None:
         console.print(f"[dim]Errors: {len(result.errors)}[/dim]")
 
 
+def _location(f: Finding) -> str:
+    loc = f"{f.file}:{f.line_number}"
+    if "cell" in f.extra:
+        loc += f" (cell {f.extra['cell']}, {f.extra.get('output_type', 'source')})"
+    return loc
+
+
+def _verification(f: Finding) -> Optional[dict]:
+    if f.verification_status is None:
+        return None
+    return {"status": f.verification_status, "checked_at": f.verified_at, "error": f.verification_error}
+
+
+def finding_dict(f: Finding, redact: bool = False) -> dict:
+    rem = get_remediation(f.secret_type)
+    return {
+        "rule_id": f.rule_id,
+        "severity": f.severity,
+        "confidence": f.confidence,
+        "type": f.secret_type,
+        "file": f.file,
+        "line": f.line_number,
+        "match": _display(f.matched_value, redact),
+        "entropy": f.entropy,
+        "source": f.source,
+        "commit": f.commit,
+        "verified": f.verified,
+        "verification": _verification(f),
+        "fingerprint": f.fingerprint(),
+        "blast_radius": rem.blast_radius,
+        "rotation_url": rem.rotation_url,
+        "blame": _blame_dict(f),
+        "extra": f.extra or {},
+    }
+
+
+def _summary(result: ScanResult, findings: list[Finding]) -> dict:
+    return {
+        "files_scanned": result.files_scanned,
+        "commits_scanned": result.commits_scanned,
+        "files_skipped": result.files_skipped,
+        "files_cached": result.files_cached,
+        "total_findings": len(findings),
+        "by_severity": {sev: sum(1 for f in findings if f.severity == sev) for sev in SEVERITY_ORDER},
+        "errors": len(result.errors),
+    }
+
+
 def to_json(result: ScanResult, redact: bool = False) -> str:
     findings = _sorted(result.findings)
     return json.dumps(
         {
-            "summary": {
-                "files_scanned": result.files_scanned,
-                "commits_scanned": result.commits_scanned,
-                "files_skipped": result.files_skipped,
-                "total_findings": len(findings),
-                "by_severity": {
-                    sev: sum(1 for f in findings if f.severity == sev)
-                    for sev in ("CRITICAL", "HIGH", "MEDIUM", "LOW")
-                },
-            },
-            "findings": [
-                {
-                    "severity": f.severity,
-                    "type": f.secret_type,
-                    "file": f.file,
-                    "line": f.line_number,
-                    "match": _display(f.matched_value, redact),
-                    "entropy": f.entropy,
-                    "source": f.source,
-                    "commit": f.commit,
-                    "verified": f.verified,
-                    "fingerprint": f.fingerprint(),
-                    "blast_radius": get_remediation(f.secret_type).blast_radius,
-                    "rotation_url": get_remediation(f.secret_type).rotation_url,
-                    "blame": _blame_dict(f),
-                }
-                for f in findings
-            ],
+            "schema_version": SCHEMA_VERSION,
+            "tool": {"name": "leakscan", "version": __version__},
+            "summary": _summary(result, findings),
+            "findings": [finding_dict(f, redact) for f in findings],
+            "errors": result.errors,
         },
         indent=2,
     )
@@ -244,7 +279,7 @@ def to_csv(result: ScanResult, redact: bool = False) -> str:
     writer = csv.DictWriter(
         buf,
         fieldnames=[
-            "severity", "type", "file", "line", "match", "entropy", "source",
+            "rule_id", "severity", "confidence", "type", "file", "line", "match", "entropy", "source",
             "commit", "verified", "fingerprint", "blast_radius", "rotation_url",
             "secret_age", "scraping_risk",
         ],
@@ -254,6 +289,8 @@ def to_csv(result: ScanResult, redact: bool = False) -> str:
         rem = get_remediation(f.secret_type)
         blame_info = _blame_dict(f)
         writer.writerow({
+            "rule_id": f.rule_id,
+            "confidence": f.confidence,
             "severity": f.severity,
             "type": f.secret_type,
             "file": f.file,
@@ -262,7 +299,7 @@ def to_csv(result: ScanResult, redact: bool = False) -> str:
             "entropy": f.entropy or "",
             "source": f.source,
             "commit": f.commit or "",
-            "verified": f.verified or "",
+            "verified": f.verification_status or "",
             "fingerprint": f.fingerprint(),
             "blast_radius": rem.blast_radius,
             "rotation_url": rem.rotation_url,
@@ -272,62 +309,70 @@ def to_csv(result: ScanResult, redact: bool = False) -> str:
     return buf.getvalue()
 
 
-def to_sarif(result: ScanResult) -> str:
-    from scanner.patterns import PATTERNS
+def to_sarif(result: ScanResult, redact: bool = True) -> str:
+    from scanner.patterns import by_id
     findings = _sorted(result.findings)
-    present_types = {f.secret_type for f in findings}
-    pattern_map = {p.name: p for p in PATTERNS}
-
+    known = by_id()
     rules = []
-    for t in sorted(present_types):
-        p = pattern_map.get(t)
+    for rid in sorted({f.rule_id for f in findings}):
+        p = known.get(rid)
+        sample = next(f for f in findings if f.rule_id == rid)
+        rem = get_remediation(sample.secret_type)
         rules.append({
-            "id": t,
-            "name": t.replace(" ", ""),
-            "shortDescription": {"text": p.description if p else t},
-            "defaultConfiguration": {
-                "level": _sarif_level(p.severity if p else "MEDIUM")
-            },
-            "helpUri": "https://github.com/Vasishta03/secret-scanner",
+            "id": rid,
+            "name": sample.secret_type.replace(" ", ""),
+            "shortDescription": {"text": p.description if p else sample.secret_type},
+            "fullDescription": {"text": rem.consequence},
+            "help": {"text": f"Blast radius: {rem.blast_radius}. Rotate at {rem.rotation_url}"},
+            "defaultConfiguration": {"level": _sarif_level(p.severity if p else sample.severity)},
+            "helpUri": f"{DOCS_URL}/rules/{rid}/",
+            "properties": {"tags": ["security", "secret"], "security-severity": _security_severity(sample.severity)},
         })
+
+    def _result(f: Finding) -> dict:
+        rem = get_remediation(f.secret_type)
+        props: dict = {
+            "secretType": f.secret_type,
+            "confidence": f.confidence,
+            "source": f.source,
+            "blastRadius": rem.blast_radius,
+            "rotationUrl": rem.rotation_url,
+        }
+        if f.commit:
+            props["commit"] = f.commit
+        if f.verification_status:
+            props["verification"] = f.verification_status
+            props["verifiedAt"] = f.verified_at
+        if f.extra:
+            props.update({k: v for k, v in f.extra.items() if isinstance(v, (str, int, float, bool))})
+        return {
+            "ruleId": f.rule_id,
+            "level": _sarif_level(f.severity),
+            "message": {"text": f"{f.secret_type} detected ({_display(f.matched_value, redact)})"},
+            "locations": [{
+                "physicalLocation": {
+                    "artifactLocation": {"uri": f.file.replace("\\", "/"), "uriBaseId": "%SRCROOT%"},
+                    "region": {"startLine": max(f.line_number, 1)},
+                }
+            }],
+            "partialFingerprints": {"primaryLocationLineHash": f.fingerprint()},
+            "properties": props,
+        }
 
     sarif = {
         "version": "2.1.0",
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
         "runs": [{
-            "tool": {
-                "driver": {
-                    "name": "secret-scanner",
-                    "version": "0.4.0",
-                    "informationUri": "https://github.com/Vasishta03/secret-scanner",
-                    "rules": rules,
-                }
-            },
-            "results": [
-                {
-                    "ruleId": f.secret_type,
-                    "level": _sarif_level(f.severity),
-                    "message": {"text": f"{f.secret_type} detected in {f.file}"},
-                    "locations": [{
-                        "physicalLocation": {
-                            "artifactLocation": {
-                                "uri": f.file.replace("\\", "/"),
-                                "uriBaseId": "%SRCROOT%",
-                            },
-                            "region": {"startLine": f.line_number},
-                        }
-                    }],
-                    "partialFingerprints": {"primaryLocationLineHash": f.fingerprint()},
-                    "properties": {
-                        "blastRadius": get_remediation(f.secret_type).blast_radius,
-                        "rotationUrl": get_remediation(f.secret_type).rotation_url,
-                    },
-                }
-                for f in findings
-            ],
+            "tool": {"driver": {"name": "leakscan", "version": __version__, "informationUri": REPO_URL,
+                                "rules": rules}},
+            "results": [_result(f) for f in findings],
         }],
     }
     return json.dumps(sarif, indent=2)
+
+
+def _security_severity(severity: str) -> str:
+    return {"CRITICAL": "9.5", "HIGH": "8.0", "MEDIUM": "5.5", "LOW": "2.0"}.get(severity, "5.0")
 
 
 def _sarif_level(severity: str) -> str:
@@ -346,7 +391,7 @@ def to_disclosure_report(username: str, result: ScanResult, redact: bool = False
         "",
         "## Summary",
         "",
-        "This report was generated by an automated secret scanner. "
+        "This report was generated by leakscan, an automated secret scanner. "
         "The following potential secrets were detected in public repositories.",
         "",
         "## Findings",
@@ -389,7 +434,7 @@ def to_disclosure_report(username: str, result: ScanResult, redact: bool = False
         "4. Review git history - secrets committed then deleted are still visible.",
         "",
         "---",
-        "*Report generated by [secret-scanner](https://github.com/Vasishta03/secret-scanner)*",
+        f"*Report generated by [leakscan]({REPO_URL}) {__version__}*",
     ]
 
     return "\n".join(lines)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import time
 from dataclasses import dataclass
-from typing import Iterator, Optional
+from typing import Any, Iterator, Optional
 
 import requests
 
@@ -33,7 +33,7 @@ class GitHubFetcher:
         if token:
             self.session.headers["Authorization"] = f"Bearer {token}"
 
-    def _get(self, url: str, params: dict = None) -> dict | list:
+    def _get(self, url: str, params: Optional[dict] = None) -> Any:
         resp = self.session.get(url, params=params, timeout=15)
         if resp.status_code == 403 and "rate limit" in resp.text.lower():
             reset = int(resp.headers.get("X-RateLimit-Reset", time.time() + 60))
@@ -43,7 +43,7 @@ class GitHubFetcher:
         return resp.json()
 
     def list_repos(self, username: str) -> list[str]:
-        repos = []
+        repos: list[str] = []
         page = 1
         while True:
             data = self._get(
@@ -59,7 +59,7 @@ class GitHubFetcher:
         return repos
 
     def list_gists(self, username: str) -> list[str]:
-        gists = []
+        gists: list[str] = []
         page = 1
         while True:
             data = self._get(

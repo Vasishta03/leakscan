@@ -1,0 +1,19 @@
+# Verification
+
+`--verify` checks whether each detected secret still works by sending it to the provider that issued it. This is the
+only feature that sends a secret anywhere, so it's off by default and has guardrails:
+
+- **Consent:** for any target you might not own (remote repos, GitHub users and orgs, Docker images, packages), you
+  must also pass `--yes`.
+- **Scope:** `--verify-only github,openai` limits which services are contacted. Rule IDs work too.
+- **Limits:** `--verify-timeout` (default 5 seconds), `--verify-concurrency` (default 4, at most 10), and a global rate
+  limit of 10 requests per second.
+- **Read-only:** every check is a single GET or POST to an identity or listing endpoint. Nothing gets created, charged
+  or changed.
+
+Results come back as `active` (the provider accepted it), `inactive` (rejected with 401 or 403, or expired),
+`unknown` (rate limited, server error, or the provider can't tell), or `error`. Each result has a `checked_at`
+timestamp in JSON and SARIF.
+
+## What is sent where
+

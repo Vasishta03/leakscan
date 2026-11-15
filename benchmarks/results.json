@@ -1,0 +1,87 @@
+{
+  "machine": {
+    "os": "Linux-6.12.116+deb13-amd64-x86_64-with-glibc2.41",
+    "cpus": 20,
+    "python": "3.13.5"
+  },
+  "versions": {
+    "leakscan": "leakscan, version 0.5.0",
+    "gitleaks": "8.30.1",
+    "trufflehog": "trufflehog 3.99.7"
+  },
+  "repos": {
+    "requests": "https://github.com/psf/requests.git@v2.32.3",
+    "django": "https://github.com/django/django.git@5.1"
+  },
+  "fs": {
+    "requests": {
+      "files": 129,
+      "leakscan": {
+        "median_s": 1.02,
+        "min_s": 1.01,
+        "peak_rss_mb": 47.6,
+        "findings": 11
+      },
+      "gitleaks": {
+        "median_s": 0.42,
+        "min_s": 0.42,
+        "peak_rss_mb": 90.9,
+        "findings": 4
+      },
+      "trufflehog": {
+        "median_s": 1.63,
+        "min_s": 1.63,
+        "peak_rss_mb": 296.2,
+        "findings": 19
+      }
+    },
+    "django": {
+      "files": 6815,
+      "leakscan": {
+        "median_s": 2.17,
+        "min_s": 2.15,
+        "peak_rss_mb": 59.7,
+        "findings": 28
+      },
+      "gitleaks": {
+        "median_s": 1.54,
+        "min_s": 1.54,
+        "peak_rss_mb": 120.4,
+        "findings": 6
+      },
+      "trufflehog": {
+        "median_s": 2.21,
+        "min_s": 2.19,
+        "peak_rss_mb": 355.8,
+        "findings": 9
+      }
+    }
+  },
+  "history": {
+    "commits": 6294,
+    "leakscan": {
+      "median_s": 4.31,
+      "min_s": 4.28,
+      "peak_rss_mb": 78.3,
+      "findings": 15
+    },
+    "gitleaks": {
+      "median_s": 0.97,
+      "min_s": 0.96,
+      "peak_rss_mb": 128.2,
+      "findings": 13
+    },
+    "trufflehog": {
+      "median_s": 2.76,
+      "min_s": 2.74,
+      "peak_rss_mb": 291.1,
+      "findings": 44
+    }
+  },
+  "recall": {
+    "planted": 208,
+    "leakscan": 208,
+    "gitleaks": 107,
+    "trufflehog": 72
+  }
+}

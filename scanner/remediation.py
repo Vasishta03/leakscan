@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-_DOCS = "https://github.com/Vasishta03/secret-scanner/blob/main/README.md#detected-secret-types"
+_DOCS = "https://vasishta03.github.io/leakscan/rules/"
 
 
 @dataclass
@@ -129,6 +129,131 @@ _DATA: dict[str, tuple[str, str, str]] = {
 
     "High Entropy String": ("A high-entropy string was detected that does not match any known credential format. It may be a secret, a hash, an encoded value, or random test data.", "Unknown - manual review recommended", _DOCS),
 }
+
+_API = "API usage and billing abuse"
+_SRC = "Source code and CI/CD compromise"
+_PAY = "Payment processing and customer financial data"
+_MAIL = "Email sending abuse and phishing"
+_DEPLOY = "Deployment pipeline and secrets compromise"
+_DB = "Full database compromise"
+_REG = "Package registry supply-chain compromise"
+_CLOUD = "Full cloud account compromise"
+
+
+def _ai(service: str, url: str) -> tuple[str, str, str]:
+    return (f"Allows calling the {service} API billed to the key owner, and reading any files, fine-tunes or "
+            "usage data the account exposes.", _API, url)
+
+
+def _iac(what: str) -> tuple[str, str, str]:
+    return (f"A literal credential was found in {what}. Anyone with read access to the file, the image or its "
+            "history can reuse it. Move it to a secret store and inject it at runtime.",
+            "Depends on the credential; treat as exposed", _DOCS)
+
+
+_DATA.update({
+    "GitHub Fine-Grained Token": ("Grants the repository and organization permissions selected when the token was created, often including contents write and Actions secrets.", _SRC, "https://github.com/settings/tokens?type=beta"),
+    "GitLab Runner Token": ("Allows registering a rogue runner that receives CI jobs, including their variables and source checkouts.", "CI/CD pipeline compromise", "https://docs.gitlab.com/ee/ci/runners/configure_runners.html#reset-the-runner-authentication-token"),
+    "GitLab Deploy Token": ("Allows cloning the project and pulling or pushing its container and package registries.", _SRC, "https://docs.gitlab.com/ee/user/project/deploy_tokens/"),
+    "Bitbucket App Password": ("Acts as the user over the Bitbucket API with the app password's scopes, including private repositories and pipelines.", _SRC, "https://bitbucket.org/account/settings/app-passwords/"),
+    "CircleCI Personal Token": ("Allows triggering pipelines and reading project environment variables, which usually hold deploy credentials.", "CI/CD pipeline compromise", "https://app.circleci.com/settings/user/tokens"),
+    "Buildkite Agent Token": ("Allows API access to Buildkite pipelines and builds, including logs and artifacts.", "CI/CD pipeline compromise", "https://buildkite.com/user/api-access-tokens"),
+    "SonarQube Token": ("Allows reading analysis results and source snippets, and with admin scope, changing quality gates.", "Code analysis data exposure", "https://docs.sonarsource.com/sonarqube/latest/user-guide/user-account/generating-and-using-tokens/"),
+    "Stripe Restricted Key": ("Grants the specific Stripe permissions chosen for this key, which can include charges, refunds and customer data.", _PAY, "https://dashboard.stripe.com/apikeys"),
+    "Stripe Webhook Secret": ("Lets an attacker forge webhook events your backend will trust, such as fake successful payments.", "Payment event forgery", "https://dashboard.stripe.com/webhooks"),
+    "Braintree Access Token": ("Allows creating transactions and reading customer payment data on the production Braintree merchant account.", _PAY, "https://developer.paypal.com/braintree/articles/control-panel/important-gateway-credentials"),
+    "Shippo API Token": ("Allows buying shipping labels billed to the account and reading shipment and address data.", "Billing abuse and customer address exposure", "https://apps.goshippo.com/settings/api"),
+    "Credit Card Number": ("A Luhn-valid card number was found. If real, it is cardholder data covered by PCI DSS and may be usable for fraud.", "Cardholder data exposure (PCI scope)", "https://www.pcisecuritystandards.org/"),
+    "Twilio API Key": ("Combined with its secret, allows sending SMS and calls billed to the account and reading message logs.", "Communications abuse and billing fraud", "https://console.twilio.com/us1/account/keys-credentials/api-keys"),
+    "Slack Config Token": ("Allows creating and modifying Slack apps in the workspace via the App Manifest API.", "Workspace app configuration compromise", "https://api.slack.com/authentication/config-tokens"),
+    "Slack Legacy Token": ("Legacy tokens carry the full permissions of the user who created them across the workspace.", "User account and workspace compromise", "https://api.slack.com/legacy/custom-integrations/legacy-tokens"),
+    "Resend API Key": ("Allows sending email from your verified domains and reading delivery logs.", _MAIL, "https://resend.com/api-keys"),
+    "Brevo API Key": ("Allows sending email and SMS campaigns and exporting contact lists.", _MAIL, "https://app.brevo.com/settings/keys/api"),
+    "MailerSend API Token": ("Allows sending email from your domains and reading activity data.", _MAIL, "https://app.mailersend.com/api-tokens"),
+    "Microsoft Teams Webhook": ("Anyone with the URL can post messages into the Teams channel, which is useful for internal phishing.", "Channel spam and phishing", "https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook"),
+    "Telnyx API Key": ("Allows placing calls and sending messages billed to the account, and managing numbers.", "Communications abuse and billing fraud", "https://portal.telnyx.com/#/app/api-keys"),
+    "Mistral API Key": _ai("Mistral", "https://console.mistral.ai/api-keys/"),
+    "Together AI API Key": _ai("Together AI", "https://api.together.xyz/settings/api-keys"),
+    "Fireworks API Key": _ai("Fireworks AI", "https://fireworks.ai/account/api-keys"),
+    "Perplexity API Key": _ai("Perplexity", "https://www.perplexity.ai/settings/api"),
+    "DeepSeek API Key": _ai("DeepSeek", "https://platform.deepseek.com/api_keys"),
+    "xAI API Key": _ai("xAI", "https://console.x.ai/"),
+    "Weights & Biases API Key": ("Allows reading and writing experiment runs, artifacts and model files in every W&B project the user can reach.", "ML experiment and model data exposure", "https://wandb.ai/authorize"),
+    "Comet API Key": ("Allows reading and writing experiments, models and assets in the Comet workspace.", "ML experiment and model data exposure", "https://www.comet.com/account-settings/apiKeys"),
+    "Kaggle API Key": ("Allows downloading private datasets, publishing kernels and datasets as the user.", "Account and private dataset access", "https://www.kaggle.com/settings/account"),
+    "Modal Token Secret": ("Combined with the token ID, allows deploying and running code on Modal billed to the workspace.", "Compute billing abuse and code execution", "https://modal.com/settings/tokens"),
+    "Cerebras API Key": _ai("Cerebras", "https://cloud.cerebras.ai/"),
+    "OpenRouter API Key": _ai("OpenRouter", "https://openrouter.ai/settings/keys"),
+    "LangSmith API Key": ("Allows reading traces, which often contain full prompts, completions and user data.", "LLM trace and prompt data exposure", "https://smith.langchain.com/settings"),
+    "Voyage AI API Key": _ai("Voyage AI", "https://dash.voyageai.com/api-keys"),
+    "HuggingFace Org Token": ("Grants access to the organization's private models, datasets and Spaces.", "Private model/dataset access", "https://huggingface.co/settings/tokens"),
+    "ElevenLabs API Key": _ai("ElevenLabs", "https://elevenlabs.io/app/settings/api-keys"),
+    "AssemblyAI API Key": _ai("AssemblyAI", "https://www.assemblyai.com/app/account"),
+    "Deepgram API Key": _ai("Deepgram", "https://console.deepgram.com/"),
+    "Azure OpenAI Key": _ai("Azure OpenAI", "https://portal.azure.com/#view/Microsoft_Azure_ProjectOxford/CognitiveServicesHub/~/OpenAI"),
+    "Google OAuth Client Secret": ("Combined with the client ID, lets an attacker impersonate your OAuth app and phish user consent.", "OAuth application impersonation", "https://console.cloud.google.com/apis/credentials"),
+    "Google OAuth Access Token": ("A live bearer token for Google APIs with whatever scopes the user granted, valid until it expires (usually 1 hour).", "Account access until expiry", "https://myaccount.google.com/permissions"),
+    "Azure SAS Token": ("Grants the storage permissions encoded in the URL (read, write, delete, list) until its expiry time.", "Azure Storage data access", "https://learn.microsoft.com/en-us/azure/storage/common/storage-sas-overview"),
+    "Azure DevOps PAT": ("Acts as the user in Azure DevOps with the token's scopes, including repos, pipelines and artifact feeds.", _SRC, "https://dev.azure.com/_usersSettings/tokens"),
+    "Alibaba Cloud Access Key": ("Combined with its secret, allows calling Alibaba Cloud APIs as the RAM identity.", _CLOUD, "https://ram.console.aliyun.com/manage/ak"),
+    "Tencent Cloud Secret ID": ("Combined with its SecretKey, allows calling Tencent Cloud APIs as the account or sub-user.", _CLOUD, "https://console.cloud.tencent.com/cam/capi"),
+    "Scaleway Access Key": ("Combined with its secret key, allows managing Scaleway resources in the project.", _CLOUD, "https://console.scaleway.com/iam/api-keys"),
+    "Yandex Cloud API Key": ("Allows calling Yandex Cloud APIs as the service account the key belongs to.", _CLOUD, "https://console.cloud.yandex.com/"),
+    "DigitalOcean OAuth Token": ("Acts on behalf of the user over the DigitalOcean API with the granted scopes.", _CLOUD, "https://cloud.digitalocean.com/account/api/tokens"),
+    "Cloudflare Origin CA Key": ("Allows issuing and revoking Origin CA certificates for your zones.", "TLS certificate issuance for your domains", "https://dash.cloudflare.com/profile/api-tokens"),
+    "Netlify Access Token": ("Allows deploying sites, reading environment variables and managing DNS for the account.", _DEPLOY, "https://app.netlify.com/user/applications#personal-access-tokens"),
+    "Render API Key": ("Allows deploying services and reading their environment variables.", _DEPLOY, "https://dashboard.render.com/u/settings#api-keys"),
+    "Heroku API Key": ("Allows deploying apps, reading config vars (which hold other secrets) and running one-off dynos.", _DEPLOY, "https://dashboard.heroku.com/account/applications"),
+    "Heroku Legacy API Key": ("Allows deploying apps, reading config vars (which hold other secrets) and running one-off dynos.", _DEPLOY, "https://dashboard.heroku.com/account"),
+    "Deno Deploy Token": ("Allows deploying code to Deno Deploy projects and reading their environment variables.", _DEPLOY, "https://dash.deno.com/account#access-tokens"),
+    "Vault Batch Token": ("Allows reading every secret the token's policies grant until it expires.", "Secrets manager compromise (cascading)", "https://developer.hashicorp.com/vault/docs/concepts/tokens#batch-tokens"),
+    "Pulumi Access Token": ("Allows reading stack state (often containing secrets) and running updates against your infrastructure.", "Infrastructure-as-code and state file compromise", "https://app.pulumi.com/account/tokens"),
+    "Tailscale Key": ("Auth keys add devices to your tailnet; API keys manage it. Either is a path into your private network.", "VPN/internal network access", "https://login.tailscale.com/admin/settings/keys"),
+    "ngrok Authtoken": ("Allows opening tunnels on your ngrok account, which can be used to host phishing pages under your domains.", "Tunnel abuse under your account", "https://dashboard.ngrok.com/get-started/your-authtoken"),
+    "Docker Hub Token": ("Allows pulling private images and, with write scope, pushing malicious image tags.", "Container registry compromise (supply chain)", "https://app.docker.com/settings/personal-access-tokens"),
+    "1Password Service Account Token": ("Allows reading every item in the vaults the service account has access to.", "Secrets manager compromise (cascading)", "https://developer.1password.com/docs/service-accounts/manage-service-accounts/"),
+    "Snowflake Connection String": ("Contains a username and password for a Snowflake account, giving that user's access to warehouses and data.", _DB, "https://docs.snowflake.com/en/user-guide/admin-user-management"),
+    "Snowflake Password": ("Allows logging in to Snowflake as the user, with their role's access to data and compute.", _DB, "https://docs.snowflake.com/en/user-guide/admin-user-management"),
+    "Databricks Token": ("Allows running jobs and notebooks and reading data in the Databricks workspace as the user.", "Data platform compromise", "https://docs.databricks.com/en/dev-tools/auth/pat.html"),
+    "Neon API Key": ("Allows managing Neon projects, branches and roles, including resetting database passwords.", "Database access and schema control", "https://console.neon.tech/app/settings/api-keys"),
+    "Upstash Redis Token": ("Allows reading and writing every key in the Upstash database over its REST API.", "Cache/queue data compromise", "https://console.upstash.com/"),
+    "Turso Auth Token": ("Allows querying and modifying the Turso/libSQL database the token is scoped to.", _DB, "https://docs.turso.tech/cli/db/tokens/invalidate"),
+    "Airtable Personal Access Token": ("Allows reading and writing records in the bases the token is scoped to.", "Business data exposure", "https://airtable.com/create/tokens"),
+    "Algolia Admin Key": ("Admin keys can read, modify and delete every index and rotate other API keys.", "Search index compromise", "https://dashboard.algolia.com/account/api-keys"),
+    "Okta API Token": ("Acts as the admin who created it, able to manage users, groups and applications in the Okta org.", "Identity provider compromise", "https://help.okta.com/en-us/content/topics/security/api.htm"),
+    "Auth0 Client Secret": ("Lets an attacker authenticate as your Auth0 application and, for M2M apps, call the Management API.", "Identity provider compromise", "https://manage.auth0.com/"),
+    "Clerk Secret Key": ("Allows managing users and sessions in your Clerk instance from the backend API.", "Identity provider compromise", "https://dashboard.clerk.com/last-active?path=api-keys"),
+    "RubyGems API Key": ("Allows publishing new versions of gems the account owns.", _REG, "https://rubygems.org/profile/api_keys"),
+    "NuGet API Key": ("Allows pushing and unlisting packages the key is scoped to.", _REG, "https://www.nuget.org/account/apikeys"),
+    "Clojars Deploy Token": ("Allows deploying artifacts to groups the account controls.", _REG, "https://clojars.org/tokens"),
+    "JFrog API Key": ("Allows pulling and pushing artifacts in Artifactory repositories the user can access.", _REG, "https://jfrog.com/help/r/jfrog-platform-administration-documentation/access-tokens"),
+    "npmrc Auth Token": ("A registry auth token committed in .npmrc lets anyone publish or install private packages as you.", _REG, "https://www.npmjs.com/settings/~/tokens"),
+    "pypirc Password": ("A password or token in .pypirc allows uploading releases to PyPI as you.", _REG, "https://pypi.org/manage/account/token/"),
+    "netrc Password": (".netrc credentials are sent automatically by curl, git and others to the listed host.", "Account access on the target host", _DOCS),
+    "Shopify Custom App Token": ("Grants the store admin API scopes configured for the custom or partner app.", "E-commerce store and customer data compromise", "https://admin.shopify.com/store/_/settings/apps/development"),
+    "Figma Personal Token": ("Allows reading every file the user can view, including unreleased designs.", "Design file exposure", "https://www.figma.com/developers/api#access-tokens"),
+    "HubSpot Private App Token": ("Grants the CRM scopes configured on the private app, often including all contacts and deals.", "CRM and customer data exposure", "https://app.hubspot.com/private-apps/"),
+    "Typeform Token": ("Allows reading form responses, which frequently contain personal data.", "Form response data exposure", "https://admin.typeform.com/user/tokens"),
+    "Contentful Token": ("Allows reading and publishing content in every space the user can manage.", "Content defacement", "https://app.contentful.com/account/profile/cma_tokens"),
+    "ReadMe API Key": ("Allows editing your public API documentation and reading API logs.", "Documentation defacement and log exposure", "https://dash.readme.com/"),
+    "Prefect API Key": ("Allows running and modifying flows and reading blocks, which store other credentials.", "Workflow orchestration compromise", "https://app.prefect.cloud/my/api-keys"),
+    "Adafruit IO Key": ("Allows reading and writing feeds, which may control physical devices.", "IoT device and data control", "https://io.adafruit.com/"),
+    "Mapbox Secret Token": ("Secret-scoped Mapbox tokens can manage styles, datasets and uploads and incur charges.", _API, "https://account.mapbox.com/access-tokens/"),
+    "Facebook Access Token": ("Allows calling the Graph API as the user or page with the token's permissions, such as posting or reading messages.", "Social account and page compromise", "https://developers.facebook.com/tools/debug/accesstoken/"),
+    "Dynatrace API Token": ("Allows reading monitoring data and, depending on scopes, changing configuration or ingesting data.", "Observability data exposure", "https://docs.dynatrace.com/docs/manage/access-control/access-tokens"),
+    "PostHog Personal API Key": ("Allows querying all analytics events, which often include user identifiers and properties.", "Product analytics and user data exposure", "https://us.posthog.com/settings/user-api-keys"),
+    "LaunchDarkly Access Token": ("Allows changing feature flags in production, which can switch features on or off for every user.", "Production behavior control", "https://app.launchdarkly.com/settings/authorization"),
+    "Snyk API Token": ("Allows reading vulnerability reports and project details for your organization.", "Security finding exposure", "https://app.snyk.io/account"),
+    "Dockerfile Secret": _iac("a Dockerfile ENV or ARG instruction (it ends up in every image layer and in `docker history`)"),
+    "Env File Secret": _iac("a .env file"),
+    "Terraform State Secret": ("Terraform state stores resource attributes in plaintext, including generated passwords and keys.", "Infrastructure-as-code and state file compromise", "https://developer.hashicorp.com/terraform/language/state/sensitive-data"),
+    "Terraform Variable Secret": _iac("a .tfvars file"),
+    "Kubernetes Secret Data": ("Kubernetes Secret values are base64, not encrypted. Anyone with the manifest can decode them.", "Depends on the credential; treat as exposed", "https://kubernetes.io/docs/concepts/configuration/secret/"),
+    "GitHub Actions Hardcoded Secret": _iac("a GitHub Actions workflow (use `${{ secrets.NAME }}` instead)"),
+    "Compose File Secret": _iac("a docker-compose environment block"),
+    "Htpasswd Hash": ("Password hashes can be cracked offline; weak or reused passwords will fall quickly.", "Account access after offline cracking", _DOCS),
+    "Ethereum Private Key": ("Full control of the wallet: anyone with this key can transfer all of its funds irreversibly.", "Cryptocurrency funds theft", "https://ethereum.org/en/security/"),
+})
 
 _DEFAULT = Remediation(
     "An attacker could use this credential to access the associated service or system.",

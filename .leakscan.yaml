@@ -1,0 +1,7 @@
+# leakscan's own config. The rule definitions and test fixtures contain
+# secret-shaped strings on purpose; everything else must stay clean.
+allowlist:
+  paths:
+    - "tests/**"
+    - "scanner/patterns.py"
+    - "benchmarks/**"
