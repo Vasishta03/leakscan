@@ -6,7 +6,7 @@
     "architecture": {
         "64bit": {
             "url": "https://github.com/Vasishta03/leakscan/releases/download/v0.5.0/leakscan-windows-x86_64.exe#/leakscan.exe",
-            "hash": "WINDOWS_EXE_SHA256"
+            "hash": "8cdf96ece36d14f873bc8a6f6ccfa06cc2cd0c31eb90c1a7fb9f3c3445826605"
         }
     },
     "bin": "leakscan.exe",

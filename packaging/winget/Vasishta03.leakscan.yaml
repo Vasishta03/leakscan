@@ -14,6 +14,6 @@ Installers:
   - Architecture: x64
     InstallerType: portable
     InstallerUrl: https://github.com/Vasishta03/leakscan/releases/download/v0.5.0/leakscan-windows-x86_64.exe
-    InstallerSha256: WINDOWS_EXE_SHA256
+    InstallerSha256: 8cdf96ece36d14f873bc8a6f6ccfa06cc2cd0c31eb90c1a7fb9f3c3445826605
 ManifestType: singleton
 ManifestVersion: 1.6.0
