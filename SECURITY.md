@@ -56,3 +56,10 @@ attestations, Sigstore signatures, SLSA build provenance and a CycloneDX SBOM. T
 ```bash
 gh attestation verify leakscan-0.5.0-py3-none-any.whl --repo Vasishta03/leakscan
 ```
+
+### Provenance history
+
+The repository was renamed from `Vasishta03/secret-scanner` to `Vasishta03/leakscan` on 2026-11-15. Releases up to
+0.5.0 carry the old repository name in their PyPI attestations, and 0.5.1 onward carry the new one. Same repository,
+same `publish.yml` workflow and same trusted publisher. PyPI flags the 0.5.1 release as a "change of provenance"
+for this reason.

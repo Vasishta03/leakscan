@@ -92,7 +92,7 @@ pipelines:
 ```yaml
 repos:
   - repo: https://github.com/Vasishta03/leakscan
-    rev: v0.5.1
+    rev: v0.5.2
     hooks:
       - id: leakscan          # staged changes only
       # - id: leakscan-full   # whole tree, run with `pre-commit run --hook-stage manual leakscan-full`

@@ -7,6 +7,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-11-15
+
+### Changed
+
+- No code changes. This is the first release published entirely under the `Vasishta03/leakscan` repository name, so
+  PyPI's provenance check now compares against a release from the same repository. The rename is documented in SECURITY.md.
+
 ## [0.5.1] - 2026-11-15
 
 ### Changed
@@ -150,7 +157,8 @@ CI-native, notebook-aware, benchmarked.
 - Live verification, 55+ patterns, SARIF output, baseline mode, GitHub gist
   scanning, and parallel scanning.
 
-[Unreleased]: https://github.com/Vasishta03/leakscan/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/Vasishta03/leakscan/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/Vasishta03/leakscan/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/Vasishta03/leakscan/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Vasishta03/leakscan/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Vasishta03/leakscan/compare/v0.3.1...v0.4.0
