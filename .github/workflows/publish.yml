@@ -16,8 +16,8 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Check tag matches version
@@ -32,19 +32,19 @@ jobs:
           /tmp/sbom/bin/pip install --quiet dist/*.whl
           mkdir -p sbom
           cyclonedx-py environment /tmp/sbom --output-format JSON -o "sbom/leakscan-${GITHUB_REF_NAME}.cdx.json"
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@v4
         with:
           subject-path: dist/*
-      - uses: actions/attest-sbom@v2
+      - uses: actions/attest-sbom@v4
         with:
           subject-path: dist/*.whl
           sbom-path: sbom/leakscan-${{ github.ref_name }}.cdx.json
         continue-on-error: true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sbom
           path: sbom/
@@ -56,7 +56,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: dist
           path: dist/
@@ -77,8 +77,8 @@ jobs:
             name: leakscan-windows-x86_64.exe
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: pip install . pyinstaller
@@ -89,7 +89,7 @@ jobs:
           src=dist/leakscan; [ -f dist/leakscan.exe ] && src=dist/leakscan.exe
           mkdir -p bin && cp "$src" "bin/${{ matrix.name }}"
           "bin/${{ matrix.name }}" --version
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.name }}
           path: bin/
@@ -102,15 +102,15 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@v4
         with:
           subject-path: artifacts/leakscan-*
-      - uses: sigstore/gh-action-sigstore-python@v3.0.0
+      - uses: sigstore/gh-action-sigstore-python@v3.5.0
         with:
           inputs: artifacts/*.whl artifacts/*.tar.gz artifacts/leakscan-linux-x86_64 artifacts/leakscan-macos-arm64 artifacts/leakscan-windows-x86_64.exe
       - name: Checksums and notes
@@ -128,11 +128,11 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ vars.HOMEBREW_TAP_ENABLED == 'true' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: Vasishta03/homebrew-leakscan
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
