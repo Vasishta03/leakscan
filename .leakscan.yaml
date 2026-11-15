@@ -5,3 +5,5 @@ allowlist:
     - "tests/**"
     - "scanner/patterns.py"
     - "benchmarks/**"
+    - "demo.cast"   # removed in 0.5.0, still in history (fake demo keys)
+    - "demo.svg"
